@@ -1,0 +1,6 @@
+{
+  "name": "PascalHub Video & Ad Network",
+  "description": "Premium video streaming platform with prompt-driven ad campaign engine, 7 content categories including 18+ mature gate, monetization tiers, and hidden admin command center.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
