@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from 'express';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -8,11 +9,14 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const uploadsDir = path.resolve(__dirname, 'uploads');
+fs.mkdirSync(uploadsDir, { recursive: true });
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json());
+app.use('/uploads', express.static(uploadsDir));
 
 // Initialize Google GenAI if key is present
 const apiKey = process.env.GEMINI_API_KEY;
@@ -155,6 +159,68 @@ Generate a structured ad campaign creative matching the prompt and target group.
   };
 
   return res.json({ success: true, ad: generatedAd, source: 'engine' });
+});
+
+// API endpoint: Direct streaming upload for any video or thumbnail file
+app.post('/api/upload-media', (req: Request, res: Response) => {
+  const rawName = (req.headers['x-file-name'] as string) || 'media-upload.mp4';
+  const decodedName = decodeURIComponent(rawName);
+  const ext = path.extname(decodedName).toLowerCase() || '.mp4';
+  const baseName = path
+    .basename(decodedName, ext)
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 48) || 'video';
+  const safeName = `${Date.now()}_${baseName}${ext}`;
+  const targetPath = path.join(uploadsDir, safeName);
+
+  const MAX_BYTES = 500 * 1024 * 1024; // 500 MB
+  let receivedBytes = 0;
+  let aborted = false;
+
+  const writeStream = fs.createWriteStream(targetPath);
+
+  req.on('data', (chunk: Buffer) => {
+    if (aborted) return;
+    receivedBytes += chunk.length;
+    if (receivedBytes > MAX_BYTES) {
+      aborted = true;
+      writeStream.destroy();
+      fs.unlink(targetPath, () => {});
+      if (!res.headersSent) {
+        res.status(413).json({ error: 'File exceeds 500MB limit' });
+      }
+      req.destroy();
+    }
+  });
+
+  req.on('error', (err) => {
+    aborted = true;
+    writeStream.destroy();
+    fs.unlink(targetPath, () => {});
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Upload stream failed', detail: err.message });
+    }
+  });
+
+  writeStream.on('error', (err) => {
+    aborted = true;
+    fs.unlink(targetPath, () => {});
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to save uploaded media', detail: err.message });
+    }
+  });
+
+  writeStream.on('finish', () => {
+    if (aborted || res.headersSent) return;
+    res.json({
+      success: true,
+      url: `/uploads/${safeName}`,
+      fileName: safeName,
+      size: receivedBytes,
+    });
+  });
+
+  req.pipe(writeStream);
 });
 
 // Mount Vite or serve static

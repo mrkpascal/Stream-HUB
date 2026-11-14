@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Video,
@@ -31,6 +31,9 @@ import {
   Play,
   Film,
   Zap,
+  Upload,
+  Link as LinkIcon,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -65,6 +68,7 @@ export const AdminDashboard: React.FC = () => {
   >('ad-engine');
 
   // POST VIDEO FORM STATE
+  const [uploadMode, setUploadMode] = useState<'file' | 'url'>('file');
   const [videoTitle, setVideoTitle] = useState('');
   const [videoDescription, setVideoDescription] = useState('');
   const [videoGroupId, setVideoGroupId] = useState('group-1');
@@ -77,6 +81,14 @@ export const AdminDashboard: React.FC = () => {
   const [videoTags, setVideoTags] = useState('Tech, AI, Innovation');
   const [videoIsFeatured, setVideoIsFeatured] = useState(false);
   const [videoPrerollAd, setVideoPrerollAd] = useState(true);
+  const [isUploadingVideo, setIsUploadingVideo] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [isUploadingThumb, setIsUploadingThumb] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
+  const thumbFileInputRef = useRef<HTMLInputElement>(null);
 
   // AD PROMPT ENGINE STATE
   const [adPromptInput, setAdPromptInput] = useState(
@@ -123,17 +135,163 @@ export const AdminDashboard: React.FC = () => {
   ];
 
   const applyPreset = (preset: typeof samplePresets[0]) => {
+    setUploadMode('url');
+    setUploadedFileName(null);
     setVideoUrl(preset.url);
     setVideoThumbnailUrl(preset.thumb);
     setVideoDuration(preset.duration);
     setVideoDurationSeconds(preset.seconds);
   };
 
+  const uploadMediaFile = (
+    file: File | Blob,
+    fileName: string,
+    onProgress?: (pct: number) => void
+  ): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload-media');
+      xhr.setRequestHeader('x-file-name', encodeURIComponent(fileName));
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+
+      xhr.upload.onprogress = (evt) => {
+        if (evt.lengthComputable && onProgress) {
+          onProgress(Math.round((evt.loaded / evt.total) * 100));
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const parsed = JSON.parse(xhr.responseText);
+            if (parsed.success && parsed.url) {
+              resolve(parsed.url);
+              return;
+            }
+          } catch {
+            // fall through
+          }
+        }
+        reject(new Error(`Upload failed (${xhr.status})`));
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      xhr.send(file);
+    });
+  };
+
+  const extractVideoMetadataAndThumbnail = (file: File) => {
+    const objectUrl = URL.createObjectURL(file);
+    const tempVideo = document.createElement('video');
+    tempVideo.preload = 'metadata';
+    tempVideo.muted = true;
+    tempVideo.src = objectUrl;
+
+    tempVideo.onloadedmetadata = () => {
+      if (tempVideo.duration && Number.isFinite(tempVideo.duration)) {
+        const totalSec = Math.round(tempVideo.duration);
+        const mins = Math.floor(totalSec / 60);
+        const secs = totalSec % 60;
+        setVideoDuration(`${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`);
+        setVideoDurationSeconds(totalSec);
+        tempVideo.currentTime = Math.min(1.5, totalSec / 3);
+      }
+    };
+
+    tempVideo.onseeked = () => {
+      try {
+        if (!videoThumbnailUrl && tempVideo.videoWidth > 0 && tempVideo.videoHeight > 0) {
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.min(tempVideo.videoWidth, 1280);
+          canvas.height = Math.round((canvas.width / tempVideo.videoWidth) * tempVideo.videoHeight);
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(
+              async (blob) => {
+                if (blob) {
+                  try {
+                    const thumbUrl = await uploadMediaFile(blob, `thumb_${Date.now()}.jpg`);
+                    setVideoThumbnailUrl((prev) => prev || thumbUrl);
+                  } catch {
+                    // optional thumbnail capture
+                  }
+                }
+                URL.revokeObjectURL(objectUrl);
+              },
+              'image/jpeg',
+              0.85
+            );
+            return;
+          }
+        }
+      } catch {
+        // ignore canvas error
+      }
+      URL.revokeObjectURL(objectUrl);
+    };
+
+    tempVideo.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  };
+
+  const handleVideoFileSelected = async (file: File) => {
+    const validExtensions = /\.(mp4|webm|mov|mkv|avi|m4v|ogv|ogg|3gp|flv|wmv)$/i;
+    if (!file.type.startsWith('video/') && !validExtensions.test(file.name)) {
+      showToast('Please select a valid video file (MP4, WebM, MOV, MKV, etc.).');
+      return;
+    }
+
+    if (!videoTitle.trim()) {
+      const cleanedTitle = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]+/g, ' ');
+      setVideoTitle(cleanedTitle);
+    }
+
+    extractVideoMetadataAndThumbnail(file);
+
+    setIsUploadingVideo(true);
+    setUploadProgress(0);
+    setUploadedFileName(file.name);
+
+    try {
+      const uploadedUrl = await uploadMediaFile(file, file.name, (pct) => setUploadProgress(pct));
+      setVideoUrl(uploadedUrl);
+      showToast(`Video "${file.name}" uploaded and ready to publish!`);
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to upload video file.');
+      setUploadedFileName(null);
+    } finally {
+      setIsUploadingVideo(false);
+    }
+  };
+
+  const handleThumbFileSelected = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      showToast('Please choose an image file (JPG, PNG, WebP) for the thumbnail.');
+      return;
+    }
+    setIsUploadingThumb(true);
+    try {
+      const uploadedUrl = await uploadMediaFile(file, file.name);
+      setVideoThumbnailUrl(uploadedUrl);
+      showToast('Custom thumbnail uploaded!');
+    } catch {
+      showToast('Failed to upload thumbnail image.');
+    } finally {
+      setIsUploadingThumb(false);
+    }
+  };
+
   // Video Submit Handler
   const handlePostVideo = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isUploadingVideo) {
+      showToast('Please wait for the video upload to finish.');
+      return;
+    }
     if (!videoTitle.trim() || !videoUrl.trim()) {
-      showToast('Please provide a video title and streaming URL.');
+      showToast('Please upload a video file or enter a video URL.');
       return;
     }
 
@@ -166,6 +324,8 @@ export const AdminDashboard: React.FC = () => {
     setVideoDescription('');
     setVideoUrl('');
     setVideoThumbnailUrl('');
+    setUploadedFileName(null);
+    setUploadProgress(0);
     setVideoIsFeatured(false);
   };
 
@@ -709,34 +869,148 @@ export const AdminDashboard: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Video Stream URL */}
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-300 mb-1">
-                    Direct Video MP4 / WebM URL *
-                  </label>
-                  <input
-                    type="url"
-                    required
-                    placeholder="https://...mp4"
-                    value={videoUrl}
-                    onChange={(e) => setVideoUrl(e.target.value)}
-                    className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-xs text-white focus:border-rose-500 focus:outline-none"
-                  />
+              {/* Upload Source Method Selector */}
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-xs font-semibold text-neutral-200">
+                    Video Upload Source *
+                  </span>
+                  <div className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setUploadMode('file')}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                        uploadMode === 'file'
+                          ? 'bg-rose-600 text-white shadow'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      <span>Upload Video File</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUploadMode('url')}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                        uploadMode === 'url'
+                          ? 'bg-rose-600 text-white shadow'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <LinkIcon className="h-3.5 w-3.5" />
+                      <span>Paste Any Video / YouTube URL</span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* Thumbnail URL */}
-                <div>
+                {uploadMode === 'file' ? (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDraggingOver(true);
+                    }}
+                    onDragLeave={() => setIsDraggingOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDraggingOver(false);
+                      const file = e.dataTransfer.files?.[0];
+                      if (file) handleVideoFileSelected(file);
+                    }}
+                    onClick={() => videoFileInputRef.current?.click()}
+                    className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 text-center transition-all cursor-pointer ${
+                      isDraggingOver
+                        ? 'border-rose-500 bg-rose-500/10'
+                        : 'border-neutral-700 bg-neutral-900/50 hover:border-neutral-500 hover:bg-neutral-900'
+                    }`}
+                  >
+                    <input
+                      ref={videoFileInputRef}
+                      type="file"
+                      accept="video/*,.mp4,.webm,.mov,.mkv,.avi,.m4v,.ogv"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleVideoFileSelected(file);
+                      }}
+                      className="hidden"
+                    />
+                    <Upload className="h-7 w-7 text-rose-400 mb-2" />
+                    <p className="text-xs font-semibold text-white">
+                      {isUploadingVideo
+                        ? `Uploading ${uploadedFileName}... (${uploadProgress}%)`
+                        : uploadedFileName && videoUrl
+                        ? `Uploaded: ${uploadedFileName}`
+                        : 'Drag & drop any video file here, or click to browse'}
+                    </p>
+                    <p className="mt-1 text-[11px] text-neutral-400">
+                      Supports MP4, WebM, MOV, MKV, AVI, M4V (up to 500MB) · Auto-extracts duration & poster frame
+                    </p>
+
+                    {isUploadingVideo && (
+                      <div className="mt-3 h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-neutral-800">
+                        <div
+                          className="h-full bg-rose-500 transition-all duration-150"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                    )}
+
+                    {!isUploadingVideo && videoUrl && (
+                      <span className="mt-2 inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300 border border-emerald-500/30">
+                        <Check className="h-3 w-3" />
+                        <span>Ready: {videoUrl}</span>
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                      Video URL (Direct MP4 / WebM / MOV, YouTube, or Vimeo Link) *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="https://youtube.com/watch?v=... or https://example.com/video.mp4"
+                      value={videoUrl}
+                      onChange={(e) => setVideoUrl(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-xs text-white focus:border-rose-500 focus:outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Thumbnail URL + Device Image Upload */}
+                <div className="md:col-span-2">
                   <label className="block text-xs font-semibold text-neutral-300 mb-1">
-                    Poster Thumbnail Image URL
+                    Poster Thumbnail (Upload Image or Paste URL)
                   </label>
-                  <input
-                    type="url"
-                    placeholder="https://...jpg"
-                    value={videoThumbnailUrl}
-                    onChange={(e) => setVideoThumbnailUrl(e.target.value)}
-                    className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-xs text-white focus:border-rose-500 focus:outline-none"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="https://...jpg or upload an image file"
+                      value={videoThumbnailUrl}
+                      onChange={(e) => setVideoThumbnailUrl(e.target.value)}
+                      className="flex-1 rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-xs text-white focus:border-rose-500 focus:outline-none"
+                    />
+                    <input
+                      ref={thumbFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleThumbFileSelected(file);
+                      }}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={isUploadingThumb}
+                      onClick={() => thumbFileInputRef.current?.click()}
+                      className="flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-700 hover:text-white whitespace-nowrap cursor-pointer disabled:opacity-50"
+                    >
+                      <ImageIcon className="h-3.5 w-3.5 text-rose-400" />
+                      <span>{isUploadingThumb ? 'Uploading...' : 'Upload Image'}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Duration Display */}

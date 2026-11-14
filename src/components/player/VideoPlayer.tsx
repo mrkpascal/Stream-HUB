@@ -22,6 +22,24 @@ import {
   Check,
 } from 'lucide-react';
 
+function getEmbedUrl(url: string): string | null {
+  if (!url) return null;
+  try {
+    const trimmed = url.trim();
+    const ytWatch = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+    if (ytWatch?.[1]) {
+      return `https://www.youtube.com/embed/${ytWatch[1]}?autoplay=1&rel=0`;
+    }
+    const vimeo = trimmed.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+    if (vimeo?.[1]) {
+      return `https://player.vimeo.com/video/${vimeo[1]}?autoplay=1`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 interface VideoPlayerProps {
   video: Video;
   onClose?: () => void;
@@ -242,28 +260,52 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
             ref={containerRef}
             className="group relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-2xl border border-neutral-800"
           >
-            {/* Underlying Video */}
-            <video
-              ref={videoRef}
-              src={resolvedVideoUrl}
-              poster={video.thumbnailUrl}
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={handleLoadedMetadata}
-              onEnded={() => setIsPlaying(false)}
-              onError={handleVideoError}
-              onClick={togglePlay}
-              playsInline
-              className="h-full w-full object-cover cursor-pointer"
-            />
+            {(() => {
+              const embedUrl = getEmbedUrl(resolvedVideoUrl);
+              if (embedUrl) {
+                return activeAd ? (
+                  <img
+                    src={video.thumbnailUrl}
+                    alt={video.title}
+                    className="h-full w-full object-cover opacity-40"
+                  />
+                ) : (
+                  <iframe
+                    src={embedUrl}
+                    title={video.title}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                    allowFullScreen
+                    className="h-full w-full border-0"
+                  />
+                );
+              }
+              return (
+                <>
+                  {/* Underlying Video */}
+                  <video
+                    ref={videoRef}
+                    src={resolvedVideoUrl}
+                    poster={video.thumbnailUrl}
+                    onTimeUpdate={handleTimeUpdate}
+                    onLoadedMetadata={handleLoadedMetadata}
+                    onEnded={() => setIsPlaying(false)}
+                    onError={handleVideoError}
+                    onClick={togglePlay}
+                    playsInline
+                    className="h-full w-full object-cover cursor-pointer"
+                  />
 
-            {videoLoadError && !activeAd && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-neutral-950/90 p-6 text-center">
-                <p className="text-sm font-semibold text-white">Unable to load stream source</p>
-                <p className="mt-1 text-xs text-neutral-400">
-                  Please check the video URL or select another title from the catalog.
-                </p>
-              </div>
-            )}
+                  {videoLoadError && !activeAd && (
+                    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-neutral-950/90 p-6 text-center">
+                      <p className="text-sm font-semibold text-white">Unable to load stream source</p>
+                      <p className="mt-1 text-xs text-neutral-400">
+                        Please check the video URL or select another title from the catalog.
+                      </p>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* AD OVERLAY SYSTEM: INJECTED ACCORDING TO ADMIN PROMPT CONFIGURATION */}
             {activeAd && (
@@ -356,8 +398,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
               </div>
             )}
 
-            {/* Custom Video Controls Bar */}
-            {!activeAd && (
+            {/* Custom Video Controls Bar (shown for direct/uploaded video files) */}
+            {!activeAd && !getEmbedUrl(resolvedVideoUrl) && (
               <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-4 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                 {/* Scrubber Range */}
                 <div className="mb-2 flex items-center gap-2">
