@@ -680,23 +680,7 @@ export const INITIAL_SUBSCRIPTION_TIERS: SubscriptionTier[] = [
   },
 ];
 
-export const INITIAL_USERS: User[] = [
-  {
-    id: 'usr-admin-01',
-    name: 'Stream HUB Admin',
-    email: 'pascaltechhub@gmail.com',
-    avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
-    role: 'admin',
-    status: 'active',
-    age: 32,
-    birthDate: '1994-05-14',
-    createdAt: '2026-01-01',
-    subscriptionTier: 'vip',
-    watchHistory: [],
-    savedWatchlist: ['vid-101', 'vid-701'],
-    isVerified18Plus: true,
-  },
-];
+export const INITIAL_USERS: User[] = [];
 
 export const INITIAL_USER_CONTROLS: UserDashboardControls = {
   allowUserPlaylists: true,

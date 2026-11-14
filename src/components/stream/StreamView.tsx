@@ -43,27 +43,179 @@ export const StreamView: React.FC = () => {
     setAdminActiveTab,
   } = useApp();
 
-  // Filter videos by selected category tab and real-time search query (title, category, creator, tags)
-  const normalizedQuery = searchQuery.trim().toLowerCase();
-  const filteredVideos = videos.filter((video) => {
-    const matchesGroup = selectedGroupId === 'all' || video.groupId === selectedGroupId;
-    if (!normalizedQuery) return matchesGroup;
+  // Helper: channel display order index based on videoGroups
+  const getGroupOrder = (groupId: string) => {
+    const idx = videoGroups.findIndex((g) => g.id === groupId);
+    return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+  };
 
-    const group = videoGroups.find((g) => g.id === video.groupId);
-    const matchesSearch =
-      video.title.toLowerCase().includes(normalizedQuery) ||
-      video.description.toLowerCase().includes(normalizedQuery) ||
-      video.creatorName.toLowerCase().includes(normalizedQuery) ||
-      video.tags.some((t) => t.toLowerCase().includes(normalizedQuery)) ||
-      (group?.name.toLowerCase().includes(normalizedQuery) ?? false) ||
-      (group?.slug.toLowerCase().includes(normalizedQuery) ?? false);
-    return matchesGroup && matchesSearch;
-  });
+  // Filter videos by selected category tab and real-time search query, sorted by channel (newest uploads stay at the top of their channel)
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredVideos = videos
+    .filter((video) => {
+      const matchesGroup = selectedGroupId === 'all' || video.groupId === selectedGroupId;
+      if (!normalizedQuery) return matchesGroup;
+
+      const group = videoGroups.find((g) => g.id === video.groupId);
+      const matchesSearch =
+        video.title.toLowerCase().includes(normalizedQuery) ||
+        video.description.toLowerCase().includes(normalizedQuery) ||
+        video.creatorName.toLowerCase().includes(normalizedQuery) ||
+        video.tags.some((t) => t.toLowerCase().includes(normalizedQuery)) ||
+        (group?.name.toLowerCase().includes(normalizedQuery) ?? false) ||
+        (group?.slug.toLowerCase().includes(normalizedQuery) ?? false);
+      return matchesGroup && matchesSearch;
+    })
+    .sort((a, b) => getGroupOrder(a.groupId) - getGroupOrder(b.groupId));
 
   // Featured hero video
-  const heroVideo = videos.find((v) => v.featured && (selectedGroupId === 'all' || v.groupId === selectedGroupId)) || videos[0];
+  const heroVideo =
+    filteredVideos.find((v) => v.featured) ||
+    videos.find((v) => v.featured && (selectedGroupId === 'all' || v.groupId === selectedGroupId)) ||
+    filteredVideos[0] ||
+    videos[0];
 
   const activeGroup = videoGroups.find((g) => g.id === selectedGroupId);
+
+  const renderVideoCard = (video: Video) => {
+    const group = videoGroups.find((g) => g.id === video.groupId);
+    const isSaved = currentUser?.savedWatchlist.includes(video.id);
+    const isBlurred = isVideo18PlusBlurred(video);
+
+    return (
+      <div
+        key={video.id}
+        className="group relative flex flex-col justify-between overflow-hidden rounded-xl border border-neutral-800/80 bg-neutral-900/40 transition-all hover:-translate-y-1 hover:border-neutral-700 hover:shadow-xl hover:shadow-black/50"
+      >
+        {/* Thumbnail Frame */}
+        <div
+          onClick={() => playVideoWithGate(video)}
+          className="relative aspect-video w-full overflow-hidden bg-black cursor-pointer"
+        >
+          <img
+            src={video.thumbnailUrl}
+            alt={video.title}
+            referrerPolicy="no-referrer"
+            className={`h-full w-full object-cover transition-transform duration-300 ${
+              isBlurred
+                ? 'blur-2xl scale-110 brightness-50'
+                : 'group-hover:scale-105'
+            }`}
+          />
+
+          {isBlurred ? (
+            <div className="absolute inset-0 bg-black/45 backdrop-blur-md flex flex-col items-center justify-center p-3 text-center">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-600/30 border border-red-500/40 text-red-300 mb-1.5">
+                <EyeOff className="h-4 w-4" />
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-red-300">
+                18+ Blurred Vision
+              </span>
+              <span className="mt-0.5 text-[10px] text-neutral-300">
+                {!currentUser ? 'Sign In & VIP Required' : 'VIP Plan Required'}
+              </span>
+            </div>
+          ) : (
+            /* Play Hover Overlay */
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-600 text-white shadow-lg">
+                <Play className="h-4 w-4 fill-white ml-0.5" />
+              </div>
+            </div>
+          )}
+
+          {/* Duration Tag */}
+          <span className="absolute bottom-2 right-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] text-white backdrop-blur-sm">
+            {video.duration}
+          </span>
+
+          {/* 18+ Mature Badge or YouTube Sync Badge */}
+          {video.is18Plus ? (
+            <span className="absolute top-2 left-2 rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-bold text-white shadow flex items-center gap-0.5">
+              <ShieldAlert className="h-2.5 w-2.5" />
+              <span>18+</span>
+            </span>
+          ) : isYouTubeUrl(video.videoUrl) ? (
+            <span className="absolute top-2 left-2 rounded bg-red-600/90 px-1.5 py-0.5 text-[9px] font-bold text-white shadow flex items-center gap-0.5">
+              <Youtube className="h-2.5 w-2.5" />
+              <span>YouTube</span>
+            </span>
+          ) : null}
+
+          {/* Required Tier Tag */}
+          {video.requiredTier !== 'free' && (
+            <span
+              className={`absolute top-2 right-2 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                video.requiredTier === 'vip'
+                  ? 'bg-amber-500/90 text-neutral-950'
+                  : 'bg-indigo-600/90 text-white'
+              }`}
+            >
+              {video.requiredTier}
+            </span>
+          )}
+        </div>
+
+        {/* Metadata Body */}
+        <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+          <div>
+            <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 mb-1">
+              <span className="truncate">{group?.name}</span>
+              <span>·</span>
+              <span className="font-mono tabular-nums">{video.views.toLocaleString()} views</span>
+            </div>
+
+            <h3
+              onClick={() => playVideoWithGate(video)}
+              className="font-heading text-sm font-bold text-white line-clamp-2 hover:text-rose-400 transition-colors cursor-pointer"
+            >
+              {video.title}
+            </h3>
+
+            <p className="mt-1 text-xs text-neutral-400 line-clamp-2 leading-relaxed">
+              {video.description}
+            </p>
+          </div>
+
+          {/* Card Footer: Publisher & Quick Actions */}
+          <div className="flex items-center justify-between border-t border-neutral-800/60 pt-3">
+            <span className="text-[11px] font-medium text-neutral-300 truncate max-w-[130px]">
+              {video.creatorName}
+            </span>
+
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => downloadVideoWithGate(video)}
+                title="Download Video"
+                className="rounded-lg p-1.5 text-xs text-neutral-500 hover:bg-neutral-800 hover:text-emerald-400 transition-colors cursor-pointer"
+              >
+                <Download className="h-4 w-4" />
+              </button>
+
+              <button
+                onClick={() => toggleWatchlist(video.id)}
+                title={isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}
+                className={`rounded-lg p-1.5 text-xs transition-colors cursor-pointer ${
+                  isSaved
+                    ? 'text-rose-400 hover:text-rose-300'
+                    : 'text-neutral-500 hover:bg-neutral-800 hover:text-white'
+                }`}
+              >
+                <Bookmark className={`h-4 w-4 ${isSaved ? 'fill-current' : ''}`} />
+              </button>
+
+              <button
+                onClick={() => playVideoWithGate(video)}
+                className="rounded-lg bg-neutral-800 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-600 transition-colors cursor-pointer"
+              >
+                Watch
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-8 pb-16">
@@ -339,147 +491,52 @@ export const StreamView: React.FC = () => {
                 Show All Videos
               </button>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredVideos.map((video) => {
-                const group = videoGroups.find((g) => g.id === video.groupId);
-                const isSaved = currentUser?.savedWatchlist.includes(video.id);
-                const isBlurred = isVideo18PlusBlurred(video);
+          ) : selectedGroupId === 'all' ? (
+            <div className="space-y-10">
+              {videoGroups.map((group) => {
+                const groupVideos = filteredVideos.filter((v) => v.groupId === group.id);
+                if (groupVideos.length === 0) return null;
 
                 return (
-                  <div
-                    key={video.id}
-                    className="group relative flex flex-col justify-between overflow-hidden rounded-xl border border-neutral-800/80 bg-neutral-900/40 transition-all hover:-translate-y-1 hover:border-neutral-700 hover:shadow-xl hover:shadow-black/50"
-                  >
-                    {/* Thumbnail Frame */}
-                    <div
-                      onClick={() => playVideoWithGate(video)}
-                      className="relative aspect-video w-full overflow-hidden bg-black cursor-pointer"
-                    >
-                      <img
-                        src={video.thumbnailUrl}
-                        alt={video.title}
-                        referrerPolicy="no-referrer"
-                        className={`h-full w-full object-cover transition-transform duration-300 ${
-                          isBlurred
-                            ? 'blur-2xl scale-110 brightness-50'
-                            : 'group-hover:scale-105'
-                        }`}
-                      />
-
-                      {isBlurred ? (
-                        <div className="absolute inset-0 bg-black/45 backdrop-blur-md flex flex-col items-center justify-center p-3 text-center">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-600/30 border border-red-500/40 text-red-300 mb-1.5">
-                            <EyeOff className="h-4 w-4" />
-                          </div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-red-300">
-                            18+ Blurred Vision
-                          </span>
-                          <span className="mt-0.5 text-[10px] text-neutral-300">
-                            {!currentUser ? 'Sign In & VIP Required' : 'VIP Plan Required'}
-                          </span>
-                        </div>
-                      ) : (
-                        /* Play Hover Overlay */
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-600 text-white shadow-lg">
-                            <Play className="h-4 w-4 fill-white ml-0.5" />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Duration Tag */}
-                      <span className="absolute bottom-2 right-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] text-white backdrop-blur-sm">
-                        {video.duration}
-                      </span>
-
-                      {/* 18+ Mature Badge or YouTube Sync Badge */}
-                      {video.is18Plus ? (
-                        <span className="absolute top-2 left-2 rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-bold text-white shadow flex items-center gap-0.5">
-                          <ShieldAlert className="h-2.5 w-2.5" />
-                          <span>18+</span>
-                        </span>
-                      ) : isYouTubeUrl(video.videoUrl) ? (
-                        <span className="absolute top-2 left-2 rounded bg-red-600/90 px-1.5 py-0.5 text-[9px] font-bold text-white shadow flex items-center gap-0.5">
-                          <Youtube className="h-2.5 w-2.5" />
-                          <span>YouTube</span>
-                        </span>
-                      ) : null}
-
-                      {/* Required Tier Tag */}
-                      {video.requiredTier !== 'free' && (
+                  <section key={group.id} className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800/80 pb-2.5">
+                      <div className="flex items-center gap-2.5">
                         <span
-                          className={`absolute top-2 right-2 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
-                            video.requiredTier === 'vip'
-                              ? 'bg-amber-500/90 text-neutral-950'
-                              : 'bg-indigo-600/90 text-white'
-                          }`}
-                        >
-                          {video.requiredTier}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Metadata Body */}
-                    <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                      <div>
-                        <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 mb-1">
-                          <span className="truncate">{group?.name}</span>
-                          <span>·</span>
-                          <span className="font-mono tabular-nums">{video.views.toLocaleString()} views</span>
-                        </div>
-
-                        <h3
-                          onClick={() => playVideoWithGate(video)}
-                          className="font-heading text-sm font-bold text-white line-clamp-2 hover:text-rose-400 transition-colors cursor-pointer"
-                        >
-                          {video.title}
+                          className="h-2.5 w-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: group.accentColor || '#f43f5e' }}
+                        />
+                        <h3 className="font-heading text-base font-bold text-white tracking-tight">
+                          {group.index}. {group.name}
                         </h3>
-
-                        <p className="mt-1 text-xs text-neutral-400 line-clamp-2 leading-relaxed">
-                          {video.description}
-                        </p>
-                      </div>
-
-                      {/* Card Footer: Publisher & Quick Actions */}
-                      <div className="flex items-center justify-between border-t border-neutral-800/60 pt-3">
-                        <span className="text-[11px] font-medium text-neutral-300 truncate max-w-[130px]">
-                          {video.creatorName}
+                        <span className="rounded-md bg-neutral-900 border border-neutral-800 px-2 py-0.5 font-mono text-[11px] text-neutral-400">
+                          {groupVideos.length} {groupVideos.length === 1 ? 'video' : 'videos'}
                         </span>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => downloadVideoWithGate(video)}
-                            title="Download Video"
-                            className="rounded-lg p-1.5 text-xs text-neutral-500 hover:bg-neutral-800 hover:text-emerald-400 transition-colors cursor-pointer"
-                          >
-                            <Download className="h-4 w-4" />
-                          </button>
-
-                          <button
-                            onClick={() => toggleWatchlist(video.id)}
-                            title={isSaved ? 'Remove from Watchlist' : 'Add to Watchlist'}
-                            className={`rounded-lg p-1.5 text-xs transition-colors cursor-pointer ${
-                              isSaved
-                                ? 'text-rose-400 hover:text-rose-300'
-                                : 'text-neutral-500 hover:bg-neutral-800 hover:text-white'
-                            }`}
-                          >
-                            <Bookmark className={`h-4 w-4 ${isSaved ? 'fill-current' : ''}`} />
-                          </button>
-
-                          <button
-                            onClick={() => playVideoWithGate(video)}
-                            className="rounded-lg bg-neutral-800 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-600 transition-colors cursor-pointer"
-                          >
-                            Watch
-                          </button>
-                        </div>
+                        {group.is18Plus && (
+                          <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                            18+
+                          </span>
+                        )}
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedGroupId(group.id)}
+                        className="text-xs font-semibold text-rose-400 hover:text-rose-300 cursor-pointer"
+                      >
+                        Open Channel →
+                      </button>
                     </div>
-                  </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                      {groupVideos.map(renderVideoCard)}
+                    </div>
+                  </section>
                 );
               })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {filteredVideos.map(renderVideoCard)}
             </div>
           )}
         </div>

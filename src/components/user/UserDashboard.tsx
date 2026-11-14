@@ -22,6 +22,7 @@ import {
 export const UserDashboard: React.FC = () => {
   const {
     currentUser,
+    isAdmin,
     videos,
     videoGroups,
     subscriptionTiers,
@@ -46,6 +47,31 @@ export const UserDashboard: React.FC = () => {
         <p className="text-xs text-neutral-400 mt-2">
           Please sign in to view your personalized dashboard, saved watchlist, and subscription tier.
         </p>
+      </div>
+    );
+  }
+
+  if (isAdmin) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center space-y-4">
+        <h2 className="font-heading text-xl font-bold text-white">Subscriber Dashboard</h2>
+        <p className="text-xs text-neutral-400">
+          Administrator accounts are hidden from the subscriber user dashboard.
+        </p>
+        <div className="flex items-center justify-center gap-3">
+          <button
+            onClick={() => setCurrentView('admin-dashboard')}
+            className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 cursor-pointer"
+          >
+            Go to Admin Center
+          </button>
+          <button
+            onClick={() => setCurrentView('stream')}
+            className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 cursor-pointer"
+          >
+            Browse Video Stream
+          </button>
+        </div>
       </div>
     );
   }

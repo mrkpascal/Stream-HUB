@@ -32,6 +32,7 @@ import { COUNTRY_CURRENCIES } from '../utils/currency';
 interface AppContextType {
   currentUser: User | null;
   isAdmin: boolean;
+  isMasterAdmin: boolean;
   videos: Video[];
   videoGroups: VideoGroup[];
   adCampaigns: AdCampaign[];
@@ -45,8 +46,8 @@ interface AppContextType {
   // Navigation & View State
   currentView: 'stream' | 'admin-dashboard' | 'user-dashboard' | 'pricing';
   setCurrentView: (view: 'stream' | 'admin-dashboard' | 'user-dashboard' | 'pricing') => void;
-  adminActiveTab: 'videos' | 'ad-engine' | 'site-editor' | 'ai-studio-prompt' | 'analytics' | 'users' | 'controls' | 'monetization' | 'payment-review';
-  setAdminActiveTab: (tab: 'videos' | 'ad-engine' | 'site-editor' | 'ai-studio-prompt' | 'analytics' | 'users' | 'controls' | 'monetization' | 'payment-review') => void;
+  adminActiveTab: 'videos' | 'ad-engine' | 'site-editor' | 'analytics' | 'users' | 'controls' | 'monetization' | 'payment-review';
+  setAdminActiveTab: (tab: 'videos' | 'ad-engine' | 'site-editor' | 'analytics' | 'users' | 'controls' | 'monetization' | 'payment-review') => void;
   selectedGroupId: string;
   setSelectedGroupId: (id: string) => void;
   searchQuery: string;
@@ -113,13 +114,6 @@ interface AppContextType {
   updateSubscriptionTier: (tierId: SubscriptionTierId, updates: Partial<SubscriptionTier>) => void;
   updateSiteConfig: (updates: Partial<SiteConfig>) => void;
   resetSiteConfig: () => void;
-  applySitePrompt: (
-    prompt: string,
-    attachedImageUrl?: string
-  ) => Promise<{ success: boolean; summary?: string; source?: string; error?: string }>;
-  undoLastSitePrompt: () => void;
-  canUndoSitePrompt: boolean;
-  sitePromptHistory: { id: string; prompt: string; summary: string; source: string; createdAt: string }[];
   updateVideoGroup: (groupId: string, updates: Partial<VideoGroup>) => void;
   addVideoGroup: (group: { name: string; description: string; is18Plus: boolean; accentColor: string; badgeText?: string }) => void;
   deleteVideoGroup: (groupId: string) => void;
@@ -210,7 +204,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Load saved state or use initial defaults
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('pascalhub_user');
-    return saved ? JSON.parse(saved) : null;
+    if (!saved) return null;
+    try {
+      const parsed: User = JSON.parse(saved);
+      if (
+        parsed.id === 'usr-admin-01' ||
+        parsed.email?.toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase()
+      ) {
+        return { ...parsed, email: 'Protected Staff Session' };
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
   });
 
   const [videos, setVideos] = useState<Video[]>(() => {
@@ -287,7 +293,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [usersList, setUsersList] = useState<User[]>(() => {
     const saved = localStorage.getItem('pascalhub_users_list');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
+    if (!saved) return INITIAL_USERS;
+    try {
+      const parsed: User[] = JSON.parse(saved);
+      return parsed.filter(
+        (u) =>
+          u.id !== 'usr-admin-01' &&
+          u.email?.toLowerCase() !== ADMIN_CREDENTIALS.email.toLowerCase()
+      );
+    } catch {
+      return INITIAL_USERS;
+    }
   });
 
   const [paymentRequests, setPaymentRequests] = useState<SubscriptionPaymentRequest[]>(() => {
@@ -305,23 +321,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // View state
   const [currentView, setCurrentView] = useState<'stream' | 'admin-dashboard' | 'user-dashboard' | 'pricing'>('stream');
   const [adminActiveTab, setAdminActiveTab] = useState<
-    'videos' | 'ad-engine' | 'site-editor' | 'ai-studio-prompt' | 'analytics' | 'users' | 'controls' | 'monetization' | 'payment-review'
+    'videos' | 'ad-engine' | 'site-editor' | 'analytics' | 'users' | 'controls' | 'monetization' | 'payment-review'
   >('ad-engine');
-  const [lastSiteSnapshot, setLastSiteSnapshot] = useState<{
-    siteConfig: SiteConfig;
-    subscriptionTiers: SubscriptionTier[];
-    videoGroups: VideoGroup[];
-  } | null>(null);
-  const [sitePromptHistory, setSitePromptHistory] = useState<
-    { id: string; prompt: string; summary: string; source: string; createdAt: string }[]
-  >(() => {
-    try {
-      const saved = localStorage.getItem('streamhub_prompt_history');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
   const [selectedGroupId, setSelectedGroupId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -339,12 +340,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [pricingModalOpen, setPricingModalOpen] = useState<boolean>(false);
   const [communityPopupOpen, setCommunityPopupOpen] = useState<boolean>(false);
 
-  // Auto-open community links popup once per browser session (skip inside Admin preview iframe)
+  // Auto-open community links popup once per browser session
   useEffect(() => {
     try {
-      if (typeof window !== 'undefined' && window.location.search.includes('preview=1')) {
-        return;
-      }
       if (!sessionStorage.getItem('streamhub_community_popup_seen')) {
         const timer = setTimeout(() => {
           setCommunityPopupOpen(true);
@@ -427,7 +425,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.email === ADMIN_CREDENTIALS.email;
+  const isMasterAdminAccount = (u?: Pick<User, 'id' | 'email'> | null) =>
+    Boolean(
+      u &&
+        (u.id === 'usr-admin-01' ||
+          u.email.toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase())
+    );
+  const isMasterAdmin = isMasterAdminAccount(currentUser);
+  const isAdmin = currentUser?.role === 'admin' || isMasterAdmin;
 
   const isVideo18PlusBlurred = (video: Video): boolean => {
     const isMature = Boolean(video.is18Plus || video.groupId === 'group-7');
@@ -676,12 +681,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Auth: Regular User Login
   const loginUser = (email: string, pass: string) => {
-    // Check if admin credentials entered here
-    if (email.toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase() && pass === ADMIN_CREDENTIALS.password) {
+    const cleanEmail = email.trim().toLowerCase();
+    // Require exact master password if signing in as master admin
+    if (cleanEmail === ADMIN_CREDENTIALS.email.toLowerCase()) {
       return loginAdmin(email, pass);
     }
 
-    const found = usersList.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    const found = usersList.find((u) => u.email.toLowerCase() === cleanEmail);
     if (!found) {
       return { success: false, error: 'No account found with this email. Please create an account.' };
     }
@@ -704,7 +710,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     tier?: SubscriptionTierId;
     countryCode?: string;
   }) => {
-    if (usersList.some((u) => u.email.toLowerCase() === data.email.toLowerCase())) {
+    if (
+      data.email.trim().toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase() ||
+      usersList.some((u) => u.email.toLowerCase() === data.email.trim().toLowerCase())
+    ) {
       return { success: false, error: 'An account with this email address already exists.' };
     }
 
@@ -760,34 +769,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
-  // Auth: Hidden Admin Login with credentials email=pascaltechhub@gmail.com and password=Admin@2026
+  // Auth: Hidden Admin Login (supports Master Admin credentials and promoted Admin users)
   const loginAdmin = (email: string, pass: string) => {
-    if (email.trim().toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase() && pass === ADMIN_CREDENTIALS.password) {
-      let adminUser = usersList.find((u) => u.email.toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase());
-      if (!adminUser) {
-        adminUser = {
-          id: 'usr-admin-01',
-          name: ADMIN_CREDENTIALS.name,
-          email: ADMIN_CREDENTIALS.email,
-          avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
-          role: 'admin',
-          status: 'active',
-          age: 32,
-          birthDate: '1994-05-14',
-          createdAt: '2026-01-01',
-          subscriptionTier: 'vip',
-          watchHistory: [],
-          savedWatchlist: [],
-          isVerified18Plus: true,
-        };
-        setUsersList((prev) => [adminUser!, ...prev]);
+    const cleanEmail = email.trim().toLowerCase();
+    if (cleanEmail === ADMIN_CREDENTIALS.email.toLowerCase()) {
+      if (pass !== ADMIN_CREDENTIALS.password) {
+        return { success: false, error: 'Invalid administrator credentials. Access denied.' };
       }
+      const adminUser: User = {
+        id: 'usr-admin-01',
+        name: ADMIN_CREDENTIALS.name,
+        email: 'Protected Staff Session',
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+        role: 'admin',
+        status: 'active',
+        age: 32,
+        birthDate: '1994-05-14',
+        createdAt: '2026-01-01',
+        subscriptionTier: 'vip',
+        watchHistory: [],
+        savedWatchlist: [],
+        isVerified18Plus: true,
+      };
       setCurrentUser(adminUser);
       setAuthModalOpen(false);
       setCurrentView('admin-dashboard');
       showToast('Admin Command Center verified & unlocked.');
       return { success: true };
     }
+
+    const promotedAdmin = usersList.find(
+      (u) => u.email.toLowerCase() === cleanEmail && u.role === 'admin'
+    );
+    if (promotedAdmin) {
+      if (promotedAdmin.status === 'banned') {
+        return { success: false, error: 'This administrator account has been banned.' };
+      }
+      setCurrentUser(promotedAdmin);
+      setAuthModalOpen(false);
+      setCurrentView('admin-dashboard');
+      showToast(`Welcome back, ${promotedAdmin.name}! Admin dashboard unlocked.`);
+      return { success: true };
+    }
+
     return { success: false, error: 'Invalid administrator credentials. Access denied.' };
   };
 
@@ -943,6 +967,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Payment request from ${req.userName} has been rejected.`);
   };
 
+  // Helper: sort videos cleanly by channel order while preserving newest-first order within each channel
+  const sortVideosByChannel = (list: Video[], groups: VideoGroup[] = videoGroups) => {
+    const getOrder = (gId: string) => {
+      const idx = groups.findIndex((g) => g.id === gId);
+      return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+    };
+    return [...list].sort((a, b) => getOrder(a.groupId) - getOrder(b.groupId));
+  };
+
   // Video Actions
   const postVideo = (videoData: Omit<Video, 'id' | 'views' | 'likes' | 'createdAt'>) => {
     const newVid: Video = {
@@ -952,12 +985,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       likes: 0,
       createdAt: new Date().toISOString().split('T')[0],
     };
-    setVideos((prev) => [newVid, ...prev]);
-    showToast(`Video "${newVid.title}" published successfully to group!`);
+    setVideos((prev) => sortVideosByChannel([newVid, ...prev]));
+    showToast(`Video "${newVid.title}" published at the top of its channel!`);
   };
 
   const updateVideo = (id: string, updates: Partial<Video>) => {
-    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...updates } : v)));
+    setVideos((prev) =>
+      sortVideosByChannel(prev.map((v) => (v.id === id ? { ...v, ...updates } : v)))
+    );
     showToast('Video settings saved.');
   };
 
@@ -1096,6 +1131,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // User management & Controls
   const updateUserRole = (userId: string, role: UserRole) => {
+    const target = usersList.find((u) => u.id === userId);
+    if (!isMasterAdmin && isMasterAdminAccount(target)) return;
     setUsersList((prev) => prev.map((u) => (u.id === userId ? { ...u, role } : u)));
     if (currentUser?.id === userId) {
       setCurrentUser((prev) => (prev ? { ...prev, role } : null));
@@ -1104,6 +1141,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateUserStatus = (userId: string, status: UserStatus) => {
+    const target = usersList.find((u) => u.id === userId);
+    if (!isMasterAdmin && isMasterAdminAccount(target)) return;
     setUsersList((prev) => prev.map((u) => (u.id === userId ? { ...u, status } : u)));
     if (currentUser?.id === userId) {
       setCurrentUser((prev) => (prev ? { ...prev, status } : null));
@@ -1112,6 +1151,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateUserSubscription = (userId: string, tierId: SubscriptionTierId) => {
+    const target = usersList.find((u) => u.id === userId);
+    if (!isMasterAdmin && isMasterAdminAccount(target)) return;
     setUsersList((prev) =>
       prev.map((u) => (u.id === userId ? { ...u, subscriptionTier: tierId } : u))
     );
@@ -1148,137 +1189,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('streamhub_site_config', JSON.stringify(INITIAL_SITE_CONFIG));
     localStorage.setItem('streamhub_video_groups', JSON.stringify(INITIAL_GROUPS));
     showToast('Website texts, images, and channels restored to defaults.');
-  };
-
-  const applySitePrompt = async (
-    prompt: string,
-    attachedImageUrl?: string
-  ): Promise<{ success: boolean; summary?: string; source?: string; error?: string }> => {
-    const cleanPrompt = prompt.trim();
-    if (!cleanPrompt && !attachedImageUrl) {
-      return { success: false, error: 'Please enter a prompt or attach an image.' };
-    }
-
-    try {
-      const response = await fetch('/api/apply-site-prompt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: cleanPrompt || 'Update hero cover image with attached upload',
-          currentSiteConfig: siteConfig,
-          currentTiers: subscriptionTiers,
-          currentGroups: videoGroups,
-          attachedImageUrl,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok || !data.success || !data.result) {
-        return { success: false, error: data.error || 'Failed to apply website prompt.' };
-      }
-
-      const { summary, siteConfigPatch, tierUpdates, newChannels, renameChannels } = data.result;
-
-      // Save snapshot for single-click undo
-      setLastSiteSnapshot({
-        siteConfig,
-        subscriptionTiers,
-        videoGroups,
-      });
-
-      // Compute next state synchronously so localStorage updates before iframe reload
-      let nextSiteConfig = siteConfig;
-      if (siteConfigPatch && typeof siteConfigPatch === 'object') {
-        nextSiteConfig = { ...siteConfig, ...siteConfigPatch };
-      }
-      if (attachedImageUrl && !siteConfigPatch?.siteLogoUrl && !siteConfigPatch?.heroBannerImageUrl) {
-        nextSiteConfig = { ...nextSiteConfig, heroBannerImageUrl: attachedImageUrl };
-      }
-
-      let nextTiers = subscriptionTiers;
-      if (Array.isArray(tierUpdates) && tierUpdates.length > 0) {
-        nextTiers = subscriptionTiers.map((tier) => {
-          const patch = tierUpdates.find((u: any) => u?.id === tier.id);
-          return patch ? { ...tier, ...patch } : tier;
-        });
-      }
-
-      let nextGroups = [...videoGroups];
-      if (Array.isArray(renameChannels) && renameChannels.length > 0) {
-        nextGroups = nextGroups.map((g) => {
-          const patch = renameChannels.find((u: any) => u?.id === g.id);
-          return patch ? { ...g, ...patch } : g;
-        });
-      }
-      if (Array.isArray(newChannels) && newChannels.length > 0) {
-        newChannels.forEach((ch: any, idx: number) => {
-          if (!ch?.name?.trim()) return;
-          const alreadyExists = nextGroups.some(
-            (g) => g.name.toLowerCase() === ch.name.trim().toLowerCase()
-          );
-          if (alreadyExists) return;
-          const newId = `group-${Date.now()}-${idx}`;
-          const slug = ch.name
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/(^-|-$)/g, '');
-          nextGroups.push({
-            id: newId,
-            index: nextGroups.length + 1,
-            name: ch.name.trim(),
-            slug: slug || newId,
-            description: ch.description?.trim() || `Curated ${ch.name.trim()} streams.`,
-            is18Plus: Boolean(ch.is18Plus),
-            accentColor: ch.accentColor || '#f43f5e',
-            badgeText: ch.is18Plus ? '18+ RESTRICTED' : undefined,
-            videoCount: 0,
-          });
-        });
-      }
-
-      // Persist synchronously to localStorage before updating React state & refreshing preview iframe
-      localStorage.setItem('streamhub_site_config', JSON.stringify(nextSiteConfig));
-      localStorage.setItem('pascalhub_tiers', JSON.stringify(nextTiers));
-      localStorage.setItem('streamhub_video_groups', JSON.stringify(nextGroups));
-
-      setSiteConfig(nextSiteConfig);
-      setSubscriptionTiers(nextTiers);
-      setVideoGroups(nextGroups);
-
-      const historyEntry = {
-        id: `prompt-${Date.now()}`,
-        prompt: cleanPrompt || 'Updated image via upload',
-        summary: summary || 'Applied prompt updates to live website.',
-        source: data.source || 'gemini',
-        createdAt: new Date().toISOString(),
-      };
-      setSitePromptHistory((prev) => {
-        const updated = [historyEntry, ...prev].slice(0, 20);
-        try {
-          localStorage.setItem('streamhub_prompt_history', JSON.stringify(updated));
-        } catch {
-          // ignore storage quota
-        }
-        return updated;
-      });
-
-      showToast(historyEntry.summary);
-      return { success: true, summary: historyEntry.summary, source: data.source };
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Network error applying prompt.' };
-    }
-  };
-
-  const undoLastSitePrompt = () => {
-    if (!lastSiteSnapshot) return;
-    localStorage.setItem('streamhub_site_config', JSON.stringify(lastSiteSnapshot.siteConfig));
-    localStorage.setItem('pascalhub_tiers', JSON.stringify(lastSiteSnapshot.subscriptionTiers));
-    localStorage.setItem('streamhub_video_groups', JSON.stringify(lastSiteSnapshot.videoGroups));
-    setSiteConfig(lastSiteSnapshot.siteConfig);
-    setSubscriptionTiers(lastSiteSnapshot.subscriptionTiers);
-    setVideoGroups(lastSiteSnapshot.videoGroups);
-    setLastSiteSnapshot(null);
-    showToast('Reverted last AI Studio prompt change.');
   };
 
   const updateVideoGroup = (groupId: string, updates: Partial<VideoGroup>) => {
@@ -1339,6 +1249,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       value={{
         currentUser,
         isAdmin,
+        isMasterAdmin,
         videos,
         videoGroups,
         adCampaigns,
@@ -1402,10 +1313,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateSubscriptionTier,
         updateSiteConfig,
         resetSiteConfig,
-        applySitePrompt,
-        undoLastSitePrompt,
-        canUndoSitePrompt: Boolean(lastSiteSnapshot),
-        sitePromptHistory,
         updateVideoGroup,
         addVideoGroup,
         deleteVideoGroup,

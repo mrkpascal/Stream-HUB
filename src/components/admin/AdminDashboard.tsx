@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { FALLBACK_EXCHANGE_RATES, convertFromUsd } from '../../utils/currency';
+import { ADMIN_CREDENTIALS } from '../../data/initialData';
 import {
   Video,
   AdCampaign,
@@ -45,17 +46,12 @@ import {
   Pencil,
   LayoutTemplate,
   RotateCcw,
-  Wand2,
-  Monitor,
-  Smartphone,
-  Send,
-  Undo2,
-  History,
-  Globe,
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
   const {
+    currentUser,
+    isMasterAdmin,
     videos,
     videoGroups,
     adCampaigns,
@@ -89,26 +85,12 @@ export const AdminDashboard: React.FC = () => {
     paymentRequests,
     approvePaymentRequest,
     rejectPaymentRequest,
-    applySitePrompt,
-    undoLastSitePrompt,
-    canUndoSitePrompt,
-    sitePromptHistory,
     setCurrentView,
     showToast,
   } = useApp();
 
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
   const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null);
-
-  // AI STUDIO PROMPT TAB STATE
-  const [sitePromptText, setSitePromptText] = useState('');
-  const [isApplyingSitePrompt, setIsApplyingSitePrompt] = useState(false);
-  const [sitePromptError, setSitePromptError] = useState<string | null>(null);
-  const [sitePromptAttachedImage, setSitePromptAttachedImage] = useState('');
-  const [isUploadingPromptImage, setIsUploadingPromptImage] = useState(false);
-  const sitePromptImageInputRef = useRef<HTMLInputElement>(null);
-  const [previewKey, setPreviewKey] = useState(1);
-  const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
 
   // EDIT VIDEO MODAL STATE
   const [editingVideo, setEditingVideo] = useState<Video | null>(null);
@@ -553,8 +535,25 @@ export const AdminDashboard: React.FC = () => {
     showToast('Revenue CSV report generated & downloaded.');
   };
 
+  const isHiddenMasterUser = (u: { id?: string; email?: string }) =>
+    u.id === 'usr-admin-01' ||
+    u.email?.toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase();
+
+  // Hide the master admin account from all other admin users' dashboards
+  const visibleUsersList = isMasterAdmin
+    ? usersList
+    : usersList.filter((u) => !isHiddenMasterUser(u));
+
+  const visiblePaymentRequests = isMasterAdmin
+    ? paymentRequests
+    : paymentRequests.filter(
+        (r) =>
+          r.userId !== 'usr-admin-01' &&
+          r.userEmail?.toLowerCase() !== ADMIN_CREDENTIALS.email.toLowerCase()
+      );
+
   // Filtered Users List
-  const filteredUsers = usersList.filter((u) => {
+  const filteredUsers = visibleUsersList.filter((u) => {
     const matchesSearch =
       !userSearch ||
       u.name.toLowerCase().includes(userSearch.toLowerCase()) ||
@@ -585,11 +584,21 @@ export const AdminDashboard: React.FC = () => {
                 Stream HUB Admin Command Center
               </h1>
               <span className="rounded bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-300 border border-rose-500/30">
-                SUPER ADMIN
+                {isMasterAdmin ? 'SUPER ADMIN' : 'ADMIN'}
               </span>
             </div>
             <p className="text-xs text-neutral-400 mt-0.5">
-              Authorized Master Account: <strong className="text-white">pascaltechhub@gmail.com</strong>
+              {isMasterAdmin ? (
+                <>
+                  Authorized Master Session:{' '}
+                  <strong className="text-white">Hidden Staff Account</strong>
+                </>
+              ) : (
+                <>
+                  Signed in Administrator:{' '}
+                  <strong className="text-white">{currentUser?.email}</strong>
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -651,7 +660,7 @@ export const AdminDashboard: React.FC = () => {
           }`}
         >
           <Users className="h-4 w-4" />
-          <span>Users & Permissions ({usersList.length})</span>
+          <span>Users & Permissions ({visibleUsersList.length})</span>
         </button>
 
         <button
@@ -691,18 +700,6 @@ export const AdminDashboard: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setAdminTab('ai-studio-prompt')}
-          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
-            adminTab === 'ai-studio-prompt'
-              ? 'bg-gradient-to-r from-indigo-600 to-rose-600 text-white shadow-md'
-              : 'bg-neutral-900 text-indigo-300 hover:text-white hover:bg-neutral-800 border border-indigo-500/20'
-          }`}
-        >
-          <Wand2 className="h-4 w-4" />
-          <span>AI Studio Prompt</span>
-        </button>
-
-        <button
           onClick={() => setAdminTab('payment-review')}
           className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
             adminTab === 'payment-review'
@@ -712,9 +709,9 @@ export const AdminDashboard: React.FC = () => {
         >
           <CreditCard className="h-4 w-4" />
           <span>Payment Review</span>
-          {paymentRequests.filter((r) => r.status === 'pending').length > 0 && (
+          {visiblePaymentRequests.filter((r) => r.status === 'pending').length > 0 && (
             <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-neutral-950">
-              {paymentRequests.filter((r) => r.status === 'pending').length}
+              {visiblePaymentRequests.filter((r) => r.status === 'pending').length}
             </span>
           )}
         </button>
@@ -1603,7 +1600,13 @@ export const AdminDashboard: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-800/60">
-                  {videos.map((vid) => {
+                  {[...videos]
+                    .sort((a, b) => {
+                      const idxA = videoGroups.findIndex((g) => g.id === a.groupId);
+                      const idxB = videoGroups.findIndex((g) => g.id === b.groupId);
+                      return (idxA === -1 ? 9999 : idxA) - (idxB === -1 ? 9999 : idxB);
+                    })
+                    .map((vid) => {
                     const group = videoGroups.find((g) => g.id === vid.groupId);
 
                     return (
@@ -2755,8 +2758,8 @@ export const AdminDashboard: React.FC = () => {
               {(['pending', 'approved', 'rejected', 'all'] as const).map((status) => {
                 const count =
                   status === 'all'
-                    ? paymentRequests.length
-                    : paymentRequests.filter((r) => r.status === status).length;
+                    ? visiblePaymentRequests.length
+                    : visiblePaymentRequests.filter((r) => r.status === status).length;
                 return (
                   <button
                     key={status}
@@ -2793,7 +2796,7 @@ export const AdminDashboard: React.FC = () => {
               <div>
                 <p className="text-[11px] text-neutral-400">Awaiting Approval</p>
                 <p className="font-mono text-base font-bold text-amber-400 mt-0.5">
-                  {paymentRequests.filter((r) => r.status === 'pending').length} Requests
+                  {visiblePaymentRequests.filter((r) => r.status === 'pending').length} Requests
                 </p>
               </div>
               <Clock className="h-5 w-5 text-amber-400" />
@@ -2804,7 +2807,7 @@ export const AdminDashboard: React.FC = () => {
                 <p className="text-[11px] text-neutral-400">Approved Sub Total</p>
                 <p className="font-mono text-base font-bold text-white mt-0.5">
                   $
-                  {paymentRequests
+                  {visiblePaymentRequests
                     .filter((r) => r.status === 'approved')
                     .reduce((sum, r) => sum + r.amount, 0)
                     .toFixed(2)}
@@ -2816,7 +2819,7 @@ export const AdminDashboard: React.FC = () => {
 
           {/* Payment Requests Table */}
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6">
-            {paymentRequests.filter(
+            {visiblePaymentRequests.filter(
               (r) => paymentStatusFilter === 'all' || r.status === paymentStatusFilter
             ).length === 0 ? (
               <div className="py-10 text-center text-xs text-neutral-400">
@@ -2837,7 +2840,7 @@ export const AdminDashboard: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-800/60">
-                    {paymentRequests
+                    {visiblePaymentRequests
                       .filter(
                         (r) => paymentStatusFilter === 'all' || r.status === paymentStatusFilter
                       )
@@ -3508,321 +3511,6 @@ export const AdminDashboard: React.FC = () => {
                   onChange={(e) => updateSiteConfig({ footerCopyright: e.target.value })}
                   className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white"
                 />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODULE 9: AI STUDIO PROMPT WORKSPACE + EMBEDDED LIVE MAIN SITE PREVIEW */}
-      {/* ========================================================================= */}
-      {adminTab === 'ai-studio-prompt' && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          {/* Header Bar */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-neutral-800 pb-4">
-            <div>
-              <h2 className="font-heading text-lg font-bold text-white tracking-tight flex items-center gap-2">
-                <Wand2 className="h-5 w-5 text-indigo-400" />
-                <span>AI Studio Prompt — Live Website Editor</span>
-              </h2>
-              <p className="text-xs text-neutral-400 mt-0.5">
-                Describe any change to headlines, slogan, images, announcement banner, channels, or VIP/Pro prices and preview the main website live right here without leaving the Admin Dashboard.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              {canUndoSitePrompt && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    undoLastSitePrompt();
-                    setPreviewKey((k) => k + 1);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-900/40 cursor-pointer"
-                >
-                  <Undo2 className="h-3.5 w-3.5" />
-                  <span>Undo Last Change</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setPreviewKey((k) => k + 1)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-800 hover:text-white cursor-pointer"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                <span>Refresh Preview</span>
-              </button>
-
-              <a
-                href="https://aistudio.google.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-950/40 px-3.5 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-900/50 transition-colors"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-                <span>Open aistudio.google.com</span>
-              </a>
-            </div>
-          </div>
-
-          {/* Split Workspace: Prompt Console + Embedded Live Website Preview */}
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-            {/* Left Column: Prompt Composer + Quick Actions + History */}
-            <div className="xl:col-span-5 space-y-5">
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  setSitePromptError(null);
-                  setIsApplyingSitePrompt(true);
-                  try {
-                    const res = await applySitePrompt(sitePromptText, sitePromptAttachedImage || undefined);
-                    if (!res.success) {
-                      setSitePromptError(res.error || 'Could not apply prompt.');
-                    } else {
-                      setSitePromptText('');
-                      setSitePromptAttachedImage('');
-                      setPreviewKey((k) => k + 1);
-                    }
-                  } finally {
-                    setIsApplyingSitePrompt(false);
-                  }
-                }}
-                className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-5 space-y-4 shadow-xl"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5" />
-                    <span>Website Prompt Studio</span>
-                  </span>
-                  <span className="text-[10px] text-neutral-400">Instant Live Sync</span>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
-                    What would you like to change on the main website?
-                  </label>
-                  <textarea
-                    rows={4}
-                    value={sitePromptText}
-                    onChange={(e) => setSitePromptText(e.target.value)}
-                    placeholder="e.g. Set announcement banner to: Weekend Movie Marathon Live Now!&#10;or: Change slogan to Videos That Inspire & set VIP monthly price to $12.99&#10;or: Add a new channel called Sports & Live"
-                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 p-3 text-xs text-white placeholder-neutral-500 focus:border-indigo-500 focus:outline-none leading-relaxed"
-                  />
-                </div>
-
-                {/* Optional Image Upload Attachment for Hero / Logo */}
-                <div className="rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold text-neutral-300 flex items-center gap-1.5">
-                      <ImageIcon className="h-3.5 w-3.5 text-rose-400" />
-                      <span>Attach Image (Optional — Hero Cover or Brand Logo)</span>
-                    </span>
-                    <input
-                      ref={sitePromptImageInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        setIsUploadingPromptImage(true);
-                        try {
-                          const url = await uploadMediaFile(file, file.name);
-                          setSitePromptAttachedImage(url);
-                          showToast('Image attached to prompt.');
-                        } catch {
-                          showToast('Failed to upload attached image.');
-                        } finally {
-                          setIsUploadingPromptImage(false);
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      disabled={isUploadingPromptImage}
-                      onClick={() => sitePromptImageInputRef.current?.click()}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-2.5 py-1 text-[11px] font-semibold text-neutral-200 hover:bg-neutral-700 cursor-pointer disabled:opacity-60"
-                    >
-                      <Upload className="h-3 w-3" />
-                      <span>{isUploadingPromptImage ? 'Uploading...' : 'Upload Image'}</span>
-                    </button>
-                  </div>
-
-                  {sitePromptAttachedImage && (
-                    <div className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-900 p-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <img
-                          src={sitePromptAttachedImage}
-                          alt="Attached prompt media"
-                          className="h-10 w-16 rounded object-cover border border-neutral-700 shrink-0"
-                        />
-                        <span className="text-[10px] text-emerald-400 truncate">
-                          Image ready — mention &quot;logo&quot; in prompt for logo, otherwise sets hero cover
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setSitePromptAttachedImage('')}
-                        className="text-neutral-400 hover:text-rose-400 cursor-pointer shrink-0"
-                        title="Remove image"
-                      >
-                        <XCircle className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Quick Example Prompt Chips */}
-                <div className="space-y-1.5">
-                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
-                    Quick Prompt Examples
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      'Set announcement banner to: New HD Movies Added Today!',
-                      'Change slogan to: Videos For Everytime',
-                      'Set VIP monthly price to $14.99',
-                      'Add a new channel called Sports & Live',
-                      'Update hero title to: Stream Unlimited HD Premieres',
-                      'Hide announcement banner',
-                    ].map((preset) => (
-                      <button
-                        key={preset}
-                        type="button"
-                        onClick={() => setSitePromptText(preset)}
-                        className="rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-1 text-[10px] text-neutral-300 hover:border-indigo-500/50 hover:text-white transition-colors cursor-pointer text-left"
-                      >
-                        {preset}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {sitePromptError && (
-                  <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-950/30 p-2.5 text-xs text-red-300">
-                    <AlertCircle className="h-4 w-4 shrink-0" />
-                    <span>{sitePromptError}</span>
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={isApplyingSitePrompt || (!sitePromptText.trim() && !sitePromptAttachedImage)}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-rose-600 py-2.5 px-4 text-xs font-bold text-white shadow-lg hover:from-indigo-500 hover:to-rose-500 transition-all cursor-pointer disabled:opacity-50"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  <span>
-                    {isApplyingSitePrompt
-                      ? 'Applying Prompt to Main Website...'
-                      : 'Apply Prompt to Main Website'}
-                  </span>
-                </button>
-              </form>
-
-              {/* Prompt History Log */}
-              <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300 flex items-center gap-1.5">
-                    <History className="h-3.5 w-3.5 text-indigo-400" />
-                    <span>Applied Prompt History ({sitePromptHistory.length})</span>
-                  </h3>
-                </div>
-
-                {sitePromptHistory.length === 0 ? (
-                  <p className="text-xs text-neutral-500 py-3">
-                    No AI prompts applied yet. Submit a prompt above and watch the main website update live on the right.
-                  </p>
-                ) : (
-                  <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-                    {sitePromptHistory.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="rounded-xl border border-neutral-800 bg-neutral-950/80 p-3 space-y-1.5"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span
-                            className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
-                              entry.source === 'gemini'
-                                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            }`}
-                          >
-                            {entry.source === 'gemini' ? 'Gemini AI' : 'Smart Engine'}
-                          </span>
-                          <span className="text-[10px] text-neutral-500 flex items-center gap-1">
-                            <Clock className="h-2.5 w-2.5" />
-                            {new Date(entry.createdAt).toLocaleTimeString()}
-                          </span>
-                        </div>
-                        <p className="text-xs font-semibold text-white">&ldquo;{entry.prompt}&rdquo;</p>
-                        <p className="text-[11px] text-emerald-400">{entry.summary}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Right Column: Embedded Live Main Website Preview */}
-            <div className="xl:col-span-7 rounded-2xl border border-neutral-800 bg-neutral-900/70 overflow-hidden shadow-2xl flex flex-col">
-              {/* Browser Frame Top Bar */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-800 bg-neutral-950 px-4 py-2.5">
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
-                  </div>
-                  <div className="ml-2 flex items-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1 text-[11px] text-neutral-300">
-                    <Globe className="h-3 w-3 text-emerald-400 shrink-0" />
-                    <span className="truncate font-mono">Live Main Website Preview — {siteConfig.siteName}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setPreviewDevice('desktop')}
-                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold cursor-pointer ${
-                      previewDevice === 'desktop'
-                        ? 'bg-neutral-800 text-white'
-                        : 'text-neutral-400 hover:text-white'
-                    }`}
-                  >
-                    <Monitor className="h-3.5 w-3.5" />
-                    <span>Desktop</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewDevice('mobile')}
-                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold cursor-pointer ${
-                      previewDevice === 'mobile'
-                        ? 'bg-neutral-800 text-white'
-                        : 'text-neutral-400 hover:text-white'
-                    }`}
-                  >
-                    <Smartphone className="h-3.5 w-3.5" />
-                    <span>Mobile</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Embedded Main Website Iframe Viewport */}
-              <div className="bg-neutral-950 p-3 flex justify-center overflow-x-auto">
-                <div
-                  className={`transition-all duration-200 rounded-xl overflow-hidden border border-neutral-800 bg-neutral-950 shadow-inner ${
-                    previewDevice === 'mobile' ? 'w-[390px]' : 'w-full'
-                  }`}
-                >
-                  <iframe
-                    key={previewKey}
-                    src="/?preview=1"
-                    title="Live Main Website Preview"
-                    className="w-full h-[680px] border-0 bg-neutral-950"
-                  />
-                </div>
               </div>
             </div>
           </div>
