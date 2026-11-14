@@ -16,6 +16,9 @@ export interface User {
   watchHistory: { videoId: string; watchedAt: string; progressPercent: number }[];
   savedWatchlist: string[];
   isVerified18Plus?: boolean;
+  countryCode?: string;
+  countryName?: string;
+  preferredCurrency?: string;
 }
 
 export interface VideoGroup {
@@ -72,6 +75,7 @@ export interface AdCampaign {
   visualVibe: string;
   estimatedCpm: number;
   sampleVideoUrl?: string;
+  bannerImageUrl?: string;
   impressions: number;
   clicks: number;
   revenueEarned: number;
@@ -93,6 +97,7 @@ export interface SubscriptionTier {
   maxQuality: '720p' | '1080p Full HD' | '4K Ultra HD';
   adFree: boolean;
   allows18Plus: boolean;
+  allowsDownloads?: boolean;
 }
 
 export interface UserDashboardControls {
@@ -119,6 +124,35 @@ export interface MonetizationSettings {
   adsenseClientId: string;
   adsenseDisplaySlotId: string;
   adsenseSidebarSlotId: string;
+  subscriptionPaymentPhone: string;
+  usdtTrc20Address?: string;
+}
+
+export type PaymentReviewStatus = 'pending' | 'approved' | 'rejected';
+
+export interface SubscriptionPaymentRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  requestedTier: SubscriptionTierId;
+  billingCycle: 'monthly' | 'yearly';
+  paymentMethod?: 'momo' | 'usdt_trc20';
+  amount: number;
+  usdtAmount?: number;
+  recipientNumber: string;
+  senderPhone: string;
+  senderName: string;
+  screenshotUrl?: string;
+  transactionId?: string;
+  countryName?: string;
+  localCurrency?: string;
+  localAmount?: number;
+  rwfAmount?: number;
+  note?: string;
+  status: PaymentReviewStatus;
+  createdAt: string;
+  reviewedAt?: string;
 }
 
 export interface AnalyticsMetric {
@@ -128,4 +162,29 @@ export interface AnalyticsMetric {
   watchTimeHours: number;
   adRevenue: number;
   subRevenue: number;
+}
+
+export interface SiteConfig {
+  siteName: string;
+  siteSlogan: string;
+  siteLogoUrl: string;
+  heroBadgeText: string;
+  heroCustomTitle: string;
+  heroCustomDescription: string;
+  heroBannerImageUrl: string;
+  heroWatchButtonText: string;
+  channelsSectionTitle: string;
+  channelsSectionSubtitle: string;
+  communitySectionTitle: string;
+  communitySectionDescription: string;
+  communityPopupTitle: string;
+  communityPopupDescription: string;
+  whatsappChannelUrl: string;
+  telegramGroupUrl: string;
+  footerDescription: string;
+  footerSafeHarborText: string;
+  footerCopyright: string;
+  announcementBarEnabled?: boolean;
+  announcementBarText?: string;
+  accentTheme?: string;
 }

@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Video } from '../../types';
 import { AdSenseUnit } from '../ads/AdSenseUnit';
+import { getYouTubeId, getYouTubeEmbedUrl, getYouTubeWatchUrl } from '../../utils/youtube';
 import {
   Play,
   Pause,
@@ -20,16 +21,18 @@ import {
   Send,
   Sliders,
   Check,
+  Download,
+  Youtube,
+  EyeOff,
+  Lock,
 } from 'lucide-react';
 
 function getEmbedUrl(url: string): string | null {
   if (!url) return null;
+  const ytEmbed = getYouTubeEmbedUrl(url);
+  if (ytEmbed) return ytEmbed;
   try {
     const trimmed = url.trim();
-    const ytWatch = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
-    if (ytWatch?.[1]) {
-      return `https://www.youtube.com/embed/${ytWatch[1]}?autoplay=1&rel=0`;
-    }
     const vimeo = trimmed.match(/vimeo\.com\/(?:video\/)?(\d+)/);
     if (vimeo?.[1]) {
       return `https://player.vimeo.com/video/${vimeo[1]}?autoplay=1`;
@@ -59,9 +62,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
     toggleWatchlist,
     toggleLikeVideo,
     playVideoWithGate,
+    downloadVideoWithGate,
     userControls,
     monetization,
     setPricingModalOpen,
+    openAuthModal,
+    isVideo18PlusBlurred,
+    siteConfig,
     showToast,
   } = useApp();
 
@@ -83,6 +90,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
     video.videoUrl || '/videos/demo-stream.mp4'
   );
   const [videoLoadError, setVideoLoadError] = useState<boolean>(false);
+  const [youtubeLiveViews, setYoutubeLiveViews] = useState<number | null>(null);
+
+  const youtubeId = getYouTubeId(resolvedVideoUrl);
+  const youtubeWatchUrl = youtubeId ? getYouTubeWatchUrl(youtubeId) : null;
 
   // Comments state
   const [comments, setComments] = useState<
@@ -115,6 +126,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
   useEffect(() => {
     setResolvedVideoUrl(video.videoUrl || '/videos/demo-stream.mp4');
     setVideoLoadError(false);
+    setYoutubeLiveViews(null);
+
+    const ytId = getYouTubeId(video.videoUrl || '');
+    if (ytId) {
+      fetch(`/api/youtube-info?url=${encodeURIComponent(video.videoUrl)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.viewCount) {
+            setYoutubeLiveViews(data.viewCount);
+          }
+        })
+        .catch(() => {});
+    }
   }, [video.id, video.videoUrl]);
 
   // Video element handlers
@@ -260,7 +284,48 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
             ref={containerRef}
             className="group relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-2xl border border-neutral-800"
           >
-            {(() => {
+            {isVideo18PlusBlurred(video) ? (
+              <div className="relative h-full w-full overflow-hidden">
+                <img
+                  src={video.thumbnailUrl}
+                  alt={video.title}
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover blur-2xl scale-110 brightness-40"
+                />
+                <div className="absolute inset-0 bg-black/65 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center space-y-3">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-600/25 border border-red-500/40 text-red-400">
+                    <Lock className="h-6 w-6" />
+                  </div>
+                  <h3 className="font-heading text-base sm:text-lg font-bold text-white">
+                    18+ Blurred Vision · Restricted Access
+                  </h3>
+                  <p className="text-xs text-neutral-300 max-w-md">
+                    {!currentUser
+                      ? 'Over-18 content is blurred when no user is logged in. Sign in and activate VIP All-Access to watch.'
+                      : 'Over-18 content is blurred for your current subscription tier. Upgrade to VIP All-Access (18+ verified) to unlock.'}
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                    {!currentUser ? (
+                      <button
+                        type="button"
+                        onClick={() => openAuthModal('signin')}
+                        className="rounded-xl bg-rose-600 px-5 py-2 text-xs font-bold text-white hover:bg-rose-500 transition-colors cursor-pointer"
+                      >
+                        Sign In / Create Account
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setPricingModalOpen(true)}
+                        className="rounded-xl bg-amber-500 px-5 py-2 text-xs font-bold text-neutral-950 hover:bg-amber-400 transition-colors cursor-pointer"
+                      >
+                        Upgrade to VIP All-Access
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (() => {
               const embedUrl = getEmbedUrl(resolvedVideoUrl);
               if (embedUrl) {
                 return activeAd ? (
@@ -359,6 +424,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
                     Prompt Ad Campaign
                   </div>
 
+                  {activeAd.bannerImageUrl && (
+                    <img
+                      src={activeAd.bannerImageUrl}
+                      alt={activeAd.brandName}
+                      className="mx-auto max-h-24 w-auto rounded-lg object-cover border border-neutral-700 shadow-lg"
+                    />
+                  )}
+
                   <h2 className="font-heading text-2xl sm:text-3xl font-extrabold text-white tracking-tight leading-tight">
                     {activeAd.headline}
                   </h2>
@@ -368,17 +441,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
                   </p>
 
                   <div className="pt-2">
-                    <button
+                    <a
+                      href={activeAd.ctaUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       onClick={() => {
                         recordAdClick(activeAd.id);
-                        showToast(`Redirecting to ${activeAd.brandName}...`);
-                        window.open(activeAd.ctaUrl, '_blank');
+                        showToast(`Opening ${activeAd.brandName}...`);
                       }}
                       className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 px-6 py-2.5 text-xs font-bold text-white shadow-xl shadow-rose-900/30 hover:brightness-110 transition-all cursor-pointer"
                     >
                       <span>{activeAd.ctaText}</span>
                       <ExternalLink className="h-3.5 w-3.5" />
-                    </button>
+                    </a>
                   </div>
 
                   <p className="text-[10px] text-neutral-500 italic">
@@ -399,7 +474,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
             )}
 
             {/* Custom Video Controls Bar (shown for direct/uploaded video files) */}
-            {!activeAd && !getEmbedUrl(resolvedVideoUrl) && (
+            {!isVideo18PlusBlurred(video) && !activeAd && !getEmbedUrl(resolvedVideoUrl) && (
               <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-4 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                 {/* Scrubber Range */}
                 <div className="mb-2 flex items-center gap-2">
@@ -522,13 +597,27 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
                   <span>18+ RESTRICTED</span>
                 </span>
               )}
+              {youtubeId && (
+                <span className="rounded bg-red-600/20 px-2 py-0.5 text-[10px] font-bold text-red-400 border border-red-500/30 flex items-center gap-1">
+                  <Youtube className="h-3 w-3" />
+                  <span>Synced with YouTube</span>
+                </span>
+              )}
               <span className="rounded bg-neutral-800 px-2 py-0.5 text-[11px] font-medium text-neutral-300">
                 {currentGroup?.name || 'Channel'}
               </span>
               <span className="text-xs text-neutral-500">·</span>
               <span className="text-xs text-neutral-400 font-mono tabular-nums">
-                {video.views.toLocaleString()} views
+                {video.views.toLocaleString()} Stream HUB views
               </span>
+              {youtubeLiveViews !== null && (
+                <>
+                  <span className="text-xs text-neutral-500">·</span>
+                  <span className="text-xs text-red-400 font-mono tabular-nums">
+                    {youtubeLiveViews.toLocaleString()} YouTube views
+                  </span>
+                </>
+              )}
               <span className="text-xs text-neutral-500">·</span>
               <span className="text-xs text-neutral-400">Published {video.createdAt}</span>
             </div>
@@ -572,10 +661,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
                   <span>{isSaved ? 'Saved' : 'Watchlist'}</span>
                 </button>
 
+                {/* Direct YouTube Watch Link (also counts views on YouTube) */}
+                {youtubeWatchUrl && (
+                  <a
+                    href={youtubeWatchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 rounded-lg border border-red-500/40 bg-red-950/30 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-900/40 transition-colors"
+                  >
+                    <Youtube className="h-3.5 w-3.5" />
+                    <span>View on YouTube</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+
+                {/* Download Button (Available on all subscription plans) */}
+                <button
+                  onClick={() => downloadVideoWithGate(video)}
+                  className="flex items-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-medium text-neutral-300 hover:border-emerald-500/40 hover:text-emerald-400 transition-colors cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download</span>
+                </button>
+
                 {/* Share Button */}
                 <button
                   onClick={handleShare}
-                  className="flex items-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-medium text-neutral-300 hover:border-neutral-700 hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-medium text-neutral-300 hover:border-neutral-700 hover:text-white transition-colors cursor-pointer"
                 >
                   {hasCopiedShare ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Share2 className="h-3.5 w-3.5" />}
                   <span>{hasCopiedShare ? 'Copied' : 'Share'}</span>
@@ -603,14 +715,32 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
           {/* Interactive Comments Section */}
           {userControls.allowUserComments && (
             <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/60 p-5 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-heading text-sm font-bold text-white flex items-center gap-2">
                   <MessageSquare className="h-4 w-4 text-neutral-400" />
-                  <span>Discussion ({comments.length})</span>
+                  <span>Followers Comments &amp; Discussion ({comments.length})</span>
                 </h3>
-                <span className="text-[11px] text-neutral-500">
-                  Community guidelines enforced
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    href={siteConfig.telegramGroupUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-300 hover:bg-sky-500/20 transition-colors"
+                  >
+                    <Send className="h-3 w-3" />
+                    <span>Comment on Telegram</span>
+                    <ExternalLink className="h-3 w-3 opacity-80" />
+                  </a>
+                  <a
+                    href={siteConfig.whatsappChannelUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                  >
+                    <span>WhatsApp Updates</span>
+                    <ExternalLink className="h-3 w-3 opacity-80" />
+                  </a>
+                </div>
               </div>
 
               {/* Add Comment Input */}
@@ -671,7 +801,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
           </div>
 
           <div className="space-y-3">
-            {relatedVideos.map((item) => (
+            {relatedVideos.map((item) => {
+              const itemBlurred = isVideo18PlusBlurred(item);
+              return (
               <div
                 key={item.id}
                 onClick={() => playVideoWithGate(item)}
@@ -682,8 +814,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
                     src={item.thumbnailUrl}
                     alt={item.title}
                     referrerPolicy="no-referrer"
-                    className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                    className={`h-full w-full object-cover transition-transform ${
+                      itemBlurred
+                        ? 'blur-xl scale-110 brightness-50'
+                        : 'group-hover:scale-105'
+                    }`}
                   />
+                  {itemBlurred && (
+                    <div className="absolute inset-0 bg-black/45 flex items-center justify-center">
+                      <EyeOff className="h-4 w-4 text-red-300" />
+                    </div>
+                  )}
                   <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1 py-0.5 text-[9px] font-mono text-white">
                     {item.duration}
                   </span>
@@ -704,7 +845,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Google AdSense Sidebar Unit */}
@@ -724,7 +866,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, onClose }) => {
               Upgrade to VIP All-Access
             </h4>
             <p className="text-[11px] text-neutral-400 leading-relaxed">
-              Remove all ads permanently, unlock full 4K UHD streaming, and get unlimited access to Channel 7's 18+ Mature library.
+              Remove all ads permanently, unlock full 4K UHD streaming, and get unlimited access to the 18+ Mature library.
             </p>
             <button
               onClick={() => setPricingModalOpen(true)}

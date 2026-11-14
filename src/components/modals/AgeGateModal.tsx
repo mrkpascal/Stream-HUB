@@ -37,7 +37,7 @@ export const AgeGateModal: React.FC = () => {
         <div className="p-6 space-y-4">
           <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3.5 text-xs text-red-200 leading-relaxed">
             <p className="font-semibold text-red-300 mb-1">
-              Channel 7: 18+ Mature & Late Night Content
+              Channel 9: 18+ Mature & Late Night Content
             </p>
             You are attempting to access restricted material:
             {pending18PlusVideo && (

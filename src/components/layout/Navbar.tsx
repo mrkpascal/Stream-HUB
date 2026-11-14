@@ -11,6 +11,7 @@ import {
   Crown,
   Search,
   Lock,
+  MessageCircle,
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -23,55 +24,98 @@ export const Navbar: React.FC = () => {
     logout,
     searchQuery,
     setSearchQuery,
+    videoGroups,
+    selectedGroupId,
+    setSelectedGroupId,
     setPricingModalOpen,
+    setCommunityPopupOpen,
+    siteConfig,
   } = useApp();
 
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    if (currentView !== 'stream') setCurrentView('stream');
+  };
+
+  const handleCategoryChange = (groupId: string) => {
+    setSelectedGroupId(groupId);
+    if (currentView !== 'stream') setCurrentView('stream');
+  };
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-neutral-800/80 bg-neutral-950/90 backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-6 px-4 sm:px-6 lg:px-8">
+      {siteConfig.announcementBarEnabled && siteConfig.announcementBarText?.trim() && (
+        <div className="bg-gradient-to-r from-rose-600 via-rose-500 to-amber-500 px-4 py-1.5 text-center text-[11px] font-semibold text-white shadow-sm">
+          <div className="mx-auto flex max-w-7xl items-center justify-center gap-2">
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{siteConfig.announcementBarText}</span>
+          </div>
+        </div>
+      )}
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         
-        {/* Zone 1: Single text element wordmark */}
-        <div className="flex items-center gap-6">
+        {/* Zone 1: Single text element wordmark + Desktop Search */}
+        <div className="flex items-center gap-4 lg:gap-6 flex-1 min-w-0">
           <button
             onClick={() => setCurrentView('stream')}
-            className="group flex items-center gap-2.5 text-left focus-visible:outline-none"
+            className="group flex shrink-0 items-center gap-2.5 text-left focus-visible:outline-none cursor-pointer"
           >
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-rose-600 via-rose-500 to-amber-500 text-white shadow-lg shadow-rose-900/20 transition-transform group-hover:scale-105">
-              <Play className="h-4 w-4 fill-white" />
-            </div>
+            {siteConfig.siteLogoUrl ? (
+              <img
+                src={siteConfig.siteLogoUrl}
+                alt={siteConfig.siteName}
+                className="h-9 w-9 rounded-lg object-cover border border-neutral-700 shadow-lg transition-transform group-hover:scale-105"
+              />
+            ) : (
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-rose-600 via-rose-500 to-amber-500 text-white shadow-lg shadow-rose-900/20 transition-transform group-hover:scale-105">
+                <Play className="h-4 w-4 fill-white" />
+              </div>
+            )}
             <div className="flex flex-col">
               <span className="font-heading text-lg font-bold tracking-tight text-white transition-colors group-hover:text-rose-400">
-                PASCALHUB
+                {siteConfig.siteName}
               </span>
               <span className="text-[10px] uppercase tracking-wider text-neutral-400">
-                Stream & Ad Network
+                {siteConfig.siteSlogan}
               </span>
             </div>
           </button>
 
-          {/* Quick Search Bar */}
-          <div className="relative hidden md:block w-64 lg:w-80">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-500" />
+          {/* Real-Time Title & Category Search Bar (Desktop) */}
+          <div className="relative hidden md:flex items-center flex-1 max-w-md rounded-full border border-neutral-800 bg-neutral-900/80 focus-within:border-rose-500 focus-within:bg-neutral-900 transition-colors">
+            <Search className="ml-3 h-3.5 w-3.5 shrink-0 text-neutral-500" />
             <input
               type="text"
-              placeholder="Search 7 channels, creators..."
+              aria-label="Search videos by title or category"
+              placeholder="Search title or category (e.g. Movies, Gaming)..."
               value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                if (currentView !== 'stream') setCurrentView('stream');
-              }}
-              className="w-full rounded-full border border-neutral-800 bg-neutral-900/80 py-1.5 pl-9 pr-4 text-xs text-neutral-200 placeholder-neutral-500 transition-colors focus:border-rose-500 focus:bg-neutral-900 focus:outline-none"
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="w-full bg-transparent py-1.5 pl-2.5 pr-2 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none"
             />
             {searchQuery && (
               <button
+                type="button"
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-neutral-500 hover:text-white"
+                className="px-2 text-[10px] text-neutral-400 hover:text-white cursor-pointer"
               >
                 Clear
               </button>
             )}
+            <select
+              aria-label="Filter by category"
+              value={selectedGroupId}
+              onChange={(e) => handleCategoryChange(e.target.value)}
+              className="mr-1 rounded-full border-l border-neutral-800 bg-neutral-900 py-1 pl-2 pr-2 text-[11px] font-medium text-neutral-300 focus:outline-none cursor-pointer"
+            >
+              <option value="all">All Categories</option>
+              {videoGroups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -90,10 +134,18 @@ export const Navbar: React.FC = () => {
 
           <button
             onClick={() => setPricingModalOpen(true)}
-            className="flex items-center gap-1.5 whitespace-nowrap text-neutral-400 transition-colors hover:text-amber-400"
+            className="flex items-center gap-1.5 whitespace-nowrap text-neutral-400 transition-colors hover:text-amber-400 cursor-pointer"
           >
             <Crown className="h-3.5 w-3.5 text-amber-500" />
             <span>VIP Tiers</span>
+          </button>
+
+          <button
+            onClick={() => setCommunityPopupOpen(true)}
+            className="flex items-center gap-1.5 whitespace-nowrap text-emerald-400 transition-colors hover:text-emerald-300 cursor-pointer"
+          >
+            <MessageCircle className="h-3.5 w-3.5" />
+            <span>Updates &amp; Chat</span>
           </button>
 
           {currentUser && (
@@ -241,6 +293,43 @@ export const Navbar: React.FC = () => {
               </button>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Mobile Real-Time Search & Category Filter Row */}
+      <div className="border-t border-neutral-800/60 px-4 py-2 md:hidden">
+        <div className="flex items-center rounded-full border border-neutral-800 bg-neutral-900/90 focus-within:border-rose-500 transition-colors">
+          <Search className="ml-3 h-3.5 w-3.5 shrink-0 text-neutral-500" />
+          <input
+            type="text"
+            aria-label="Search videos by title or category"
+            placeholder="Search title or category..."
+            value={searchQuery}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            className="w-full bg-transparent py-1.5 pl-2.5 pr-2 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="px-2 text-[10px] text-neutral-400 hover:text-white cursor-pointer"
+            >
+              Clear
+            </button>
+          )}
+          <select
+            aria-label="Filter by category"
+            value={selectedGroupId}
+            onChange={(e) => handleCategoryChange(e.target.value)}
+            className="mr-1 rounded-full border-l border-neutral-800 bg-neutral-900 py-1 pl-2 pr-2 text-[11px] font-medium text-neutral-300 focus:outline-none cursor-pointer"
+          >
+            <option value="all">All</option>
+            {videoGroups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
     </header>

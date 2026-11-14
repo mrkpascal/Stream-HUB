@@ -14,6 +14,7 @@ import { UserDashboard } from './components/user/UserDashboard';
 import { AuthModal } from './components/modals/AuthModal';
 import { AgeGateModal } from './components/modals/AgeGateModal';
 import { PricingModal } from './components/modals/PricingModal';
+import { CommunityPopupModal } from './components/modals/CommunityPopupModal';
 import { ArrowLeft, CheckCircle2, ShieldAlert } from 'lucide-react';
 
 const MainApp: React.FC = () => {
@@ -97,6 +98,7 @@ const MainApp: React.FC = () => {
       <AuthModal />
       <AgeGateModal />
       <PricingModal />
+      <CommunityPopupModal />
     </div>
   );
 };

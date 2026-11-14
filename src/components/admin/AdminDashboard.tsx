@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
+import { FALLBACK_EXCHANGE_RATES, convertFromUsd } from '../../utils/currency';
 import {
   Video,
   AdCampaign,
@@ -9,6 +10,7 @@ import {
   AdFormat,
   AdThemeColor,
 } from '../../types';
+import { getYouTubeId, getYouTubeThumbnailUrl, getYouTubeWatchUrl } from '../../utils/youtube';
 import {
   Sliders,
   Video as VideoIcon,
@@ -34,6 +36,22 @@ import {
   Upload,
   Link as LinkIcon,
   Image as ImageIcon,
+  CreditCard,
+  Phone,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  Youtube,
+  Pencil,
+  LayoutTemplate,
+  RotateCcw,
+  Wand2,
+  Monitor,
+  Smartphone,
+  Send,
+  Undo2,
+  History,
+  Globe,
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -46,38 +64,83 @@ export const AdminDashboard: React.FC = () => {
     userControls,
     usersList,
     analytics,
+    siteConfig,
+    adminActiveTab: adminTab,
+    setAdminActiveTab: setAdminTab,
     postVideo,
     deleteVideo,
     updateVideo,
     generateAdFromPrompt,
     addAdCampaign,
+    updateAdCampaign,
     toggleAdActive,
     deleteAdCampaign,
     updateUserRole,
     updateUserStatus,
+    updateUserSubscription,
     updateUserControls,
     updateMonetization,
     updateSubscriptionTier,
+    updateSiteConfig,
+    resetSiteConfig,
+    updateVideoGroup,
+    addVideoGroup,
+    deleteVideoGroup,
+    paymentRequests,
+    approvePaymentRequest,
+    rejectPaymentRequest,
+    applySitePrompt,
+    undoLastSitePrompt,
+    canUndoSitePrompt,
+    sitePromptHistory,
     setCurrentView,
     showToast,
   } = useApp();
 
-  // Active Admin Sub-tab
-  const [adminTab, setAdminTab] = useState<
-    'videos' | 'ad-engine' | 'analytics' | 'users' | 'controls' | 'monetization'
-  >('ad-engine');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+  const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null);
+
+  // AI STUDIO PROMPT TAB STATE
+  const [sitePromptText, setSitePromptText] = useState('');
+  const [isApplyingSitePrompt, setIsApplyingSitePrompt] = useState(false);
+  const [sitePromptError, setSitePromptError] = useState<string | null>(null);
+  const [sitePromptAttachedImage, setSitePromptAttachedImage] = useState('');
+  const [isUploadingPromptImage, setIsUploadingPromptImage] = useState(false);
+  const sitePromptImageInputRef = useRef<HTMLInputElement>(null);
+  const [previewKey, setPreviewKey] = useState(1);
+  const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
+
+  // EDIT VIDEO MODAL STATE
+  const [editingVideo, setEditingVideo] = useState<Video | null>(null);
+  const [isUploadingEditThumb, setIsUploadingEditThumb] = useState(false);
+  const editThumbInputRef = useRef<HTMLInputElement>(null);
+
+  // EDIT AD MODAL STATE
+  const [editingAd, setEditingAd] = useState<AdCampaign | null>(null);
+  const [isUploadingAdBanner, setIsUploadingAdBanner] = useState(false);
+  const adBannerInputRef = useRef<HTMLInputElement>(null);
+
+  // SITE EDITOR IMAGE UPLOAD REFS & CHANNEL STATE
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [isUploadingHeroBanner, setIsUploadingHeroBanner] = useState(false);
+  const siteLogoInputRef = useRef<HTMLInputElement>(null);
+  const heroBannerInputRef = useRef<HTMLInputElement>(null);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelDesc, setNewChannelDesc] = useState('');
+  const [newChannelIs18Plus, setNewChannelIs18Plus] = useState(false);
+  const [newChannelColor, setNewChannelColor] = useState('#f43f5e');
 
   // POST VIDEO FORM STATE
-  const [uploadMode, setUploadMode] = useState<'file' | 'url'>('file');
+  const [uploadMode, setUploadMode] = useState<'file' | 'youtube' | 'url'>('file');
   const [videoTitle, setVideoTitle] = useState('');
   const [videoDescription, setVideoDescription] = useState('');
-  const [videoGroupId, setVideoGroupId] = useState('group-1');
+  const [videoGroupId, setVideoGroupId] = useState('group-8');
   const [videoUrl, setVideoUrl] = useState('');
   const [videoThumbnailUrl, setVideoThumbnailUrl] = useState('');
   const [videoDuration, setVideoDuration] = useState('14:30');
   const [videoDurationSeconds, setVideoDurationSeconds] = useState(870);
   const [videoRequiredTier, setVideoRequiredTier] = useState<SubscriptionTierId>('free');
-  const [videoCreator, setVideoCreator] = useState('PascalTech Studio');
+  const [videoCreator, setVideoCreator] = useState('Stream HUB Studio');
   const [videoTags, setVideoTags] = useState('Tech, AI, Innovation');
   const [videoIsFeatured, setVideoIsFeatured] = useState(false);
   const [videoPrerollAd, setVideoPrerollAd] = useState(true);
@@ -86,9 +149,19 @@ export const AdminDashboard: React.FC = () => {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [isUploadingThumb, setIsUploadingThumb] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isFetchingYoutube, setIsFetchingYoutube] = useState(false);
+  const [youtubePreview, setYoutubePreview] = useState<{
+    videoId: string;
+    title: string;
+    authorName: string;
+    thumbnailUrl: string;
+    watchUrl: string;
+    viewCount: number | null;
+  } | null>(null);
 
   const videoFileInputRef = useRef<HTMLInputElement>(null);
   const thumbFileInputRef = useRef<HTMLInputElement>(null);
+  const lastFetchedYtIdRef = useRef<string | null>(null);
 
   // AD PROMPT ENGINE STATE
   const [adPromptInput, setAdPromptInput] = useState(
@@ -283,6 +356,88 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const fetchYouTubeMetadata = async (rawUrl: string, forceToast = false) => {
+    const ytId = getYouTubeId(rawUrl);
+    if (!ytId) {
+      setYoutubePreview(null);
+      return;
+    }
+
+    const immediateThumb = getYouTubeThumbnailUrl(ytId) || '';
+    setVideoThumbnailUrl((prev) =>
+      !prev || prev.includes('i.ytimg.com/vi/') ? immediateThumb : prev
+    );
+
+    if (lastFetchedYtIdRef.current === ytId && !forceToast) return;
+    lastFetchedYtIdRef.current = ytId;
+    setIsFetchingYoutube(true);
+
+    try {
+      const res = await fetch(`/api/youtube-info?url=${encodeURIComponent(rawUrl.trim())}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setYoutubePreview({
+            videoId: data.videoId,
+            title: data.title,
+            authorName: data.authorName,
+            thumbnailUrl: data.thumbnailUrl || immediateThumb,
+            watchUrl: data.watchUrl,
+            viewCount: data.viewCount ?? null,
+          });
+          setVideoTitle((prev) => (!prev.trim() && data.title ? data.title : prev));
+          setVideoCreator((prev) =>
+            !prev.trim() || prev === 'Stream HUB Studio'
+              ? data.authorName || prev
+              : prev
+          );
+          setVideoThumbnailUrl((prev) =>
+            !prev || prev.includes('i.ytimg.com/vi/')
+              ? data.thumbnailUrl || immediateThumb
+              : prev
+          );
+          if (data.durationSeconds && Number.isFinite(data.durationSeconds)) {
+            const totalSec = data.durationSeconds;
+            const hrs = Math.floor(totalSec / 3600);
+            const mins = Math.floor((totalSec % 3600) / 60);
+            const secs = totalSec % 60;
+            setVideoDuration(
+              hrs > 0
+                ? `${hrs}:${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`
+                : `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`
+            );
+            setVideoDurationSeconds(totalSec);
+          }
+          if (forceToast) {
+            showToast(`Loaded YouTube video: "${data.title}"`);
+          }
+        }
+      }
+    } catch {
+      setYoutubePreview({
+        videoId: ytId,
+        title: `YouTube Video (${ytId})`,
+        authorName: 'YouTube Creator',
+        thumbnailUrl: immediateThumb,
+        watchUrl: getYouTubeWatchUrl(ytId) || `https://www.youtube.com/watch?v=${ytId}`,
+        viewCount: null,
+      });
+    } finally {
+      setIsFetchingYoutube(false);
+    }
+  };
+
+  const handleVideoUrlInputChange = (val: string) => {
+    setVideoUrl(val);
+    const ytId = getYouTubeId(val);
+    if (ytId) {
+      fetchYouTubeMetadata(val);
+    } else {
+      lastFetchedYtIdRef.current = null;
+      setYoutubePreview(null);
+    }
+  };
+
   // Video Submit Handler
   const handlePostVideo = (e: React.FormEvent) => {
     e.preventDefault();
@@ -290,28 +445,38 @@ export const AdminDashboard: React.FC = () => {
       showToast('Please wait for the video upload to finish.');
       return;
     }
-    if (!videoTitle.trim() || !videoUrl.trim()) {
-      showToast('Please upload a video file or enter a video URL.');
+    const trimmedUrl = videoUrl.trim();
+    const ytId = getYouTubeId(trimmedUrl);
+    const resolvedTitle =
+      videoTitle.trim() || youtubePreview?.title || (ytId ? `YouTube Video (${ytId})` : '');
+
+    if (!resolvedTitle || !trimmedUrl) {
+      showToast('Please upload a video file, paste a YouTube link, or enter a video URL.');
       return;
     }
 
     const selectedGroup = videoGroups.find((g) => g.id === videoGroupId);
     const isMature = selectedGroup ? selectedGroup.is18Plus : false;
+    const defaultThumb = ytId
+      ? getYouTubeThumbnailUrl(ytId) || ''
+      : 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80';
 
     postVideo({
-      title: videoTitle.trim(),
-      description: videoDescription.trim() || 'No description provided.',
+      title: resolvedTitle,
+      description:
+        videoDescription.trim() ||
+        (ytId
+          ? `Streaming directly with YouTube view sync (${getYouTubeWatchUrl(ytId)}).`
+          : 'No description provided.'),
       groupId: videoGroupId,
-      videoUrl: videoUrl.trim(),
-      thumbnailUrl:
-        videoThumbnailUrl.trim() ||
-        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+      videoUrl: trimmedUrl,
+      thumbnailUrl: videoThumbnailUrl.trim() || defaultThumb,
       duration: videoDuration,
       durationSeconds: videoDurationSeconds,
       requiredTier: videoRequiredTier,
       is18Plus: isMature,
       tags: videoTags.split(',').map((t) => t.trim()).filter(Boolean),
-      creatorName: videoCreator.trim() || 'Pascal Admin',
+      creatorName: videoCreator.trim() || youtubePreview?.authorName || 'Stream HUB Admin',
       featured: videoIsFeatured,
       adSettings: {
         prerollEnabled: videoPrerollAd,
@@ -326,6 +491,8 @@ export const AdminDashboard: React.FC = () => {
     setVideoThumbnailUrl('');
     setUploadedFileName(null);
     setUploadProgress(0);
+    setYoutubePreview(null);
+    lastFetchedYtIdRef.current = null;
     setVideoIsFeatured(false);
   };
 
@@ -356,7 +523,7 @@ export const AdminDashboard: React.FC = () => {
       headline: generatedDraft.headline || 'Exclusive Special Offer',
       tagline: generatedDraft.tagline || 'Experience the difference today.',
       ctaText: generatedDraft.ctaText || 'Learn More',
-      ctaUrl: generatedDraft.ctaUrl || 'https://pascalhub.stream/promo',
+      ctaUrl: generatedDraft.ctaUrl || 'https://streamhub.video/promo',
       format: (generatedDraft.format as AdFormat) || 'preroll',
       themeColor: (generatedDraft.themeColor as AdThemeColor) || 'cyan',
       durationSeconds: generatedDraft.durationSeconds || 8,
@@ -379,7 +546,7 @@ export const AdminDashboard: React.FC = () => {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `pascalhub_revenue_report_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `streamhub_revenue_report_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -415,7 +582,7 @@ export const AdminDashboard: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="font-heading text-xl font-bold text-white tracking-tight">
-                PascalHub Admin Command Center
+                Stream HUB Admin Command Center
               </h1>
               <span className="rounded bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-300 border border-rose-500/30">
                 SUPER ADMIN
@@ -510,6 +677,47 @@ export const AdminDashboard: React.FC = () => {
           <DollarSign className="h-4 w-4" />
           <span>Monetization & Tiers</span>
         </button>
+
+        <button
+          onClick={() => setAdminTab('site-editor')}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            adminTab === 'site-editor'
+              ? 'bg-rose-600 text-white shadow-md'
+              : 'bg-neutral-900 text-neutral-400 hover:text-white hover:bg-neutral-800'
+          }`}
+        >
+          <LayoutTemplate className="h-4 w-4" />
+          <span>Site Texts &amp; Images</span>
+        </button>
+
+        <button
+          onClick={() => setAdminTab('ai-studio-prompt')}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            adminTab === 'ai-studio-prompt'
+              ? 'bg-gradient-to-r from-indigo-600 to-rose-600 text-white shadow-md'
+              : 'bg-neutral-900 text-indigo-300 hover:text-white hover:bg-neutral-800 border border-indigo-500/20'
+          }`}
+        >
+          <Wand2 className="h-4 w-4" />
+          <span>AI Studio Prompt</span>
+        </button>
+
+        <button
+          onClick={() => setAdminTab('payment-review')}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            adminTab === 'payment-review'
+              ? 'bg-rose-600 text-white shadow-md'
+              : 'bg-neutral-900 text-neutral-400 hover:text-white hover:bg-neutral-800'
+          }`}
+        >
+          <CreditCard className="h-4 w-4" />
+          <span>Payment Review</span>
+          {paymentRequests.filter((r) => r.status === 'pending').length > 0 && (
+            <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-neutral-950">
+              {paymentRequests.filter((r) => r.status === 'pending').length}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* ========================================================================= */}
@@ -598,7 +806,7 @@ export const AdminDashboard: React.FC = () => {
                     onChange={(e) => setAdTargetGroup(e.target.value)}
                     className="rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-xs text-neutral-200 focus:border-rose-500 focus:outline-none"
                   >
-                    <option value="all">All 7 Video Channels</option>
+                    <option value="all">All {videoGroups.length} Video Channels</option>
                     {videoGroups.map((g) => (
                       <option key={g.id} value={g.id}>
                         {g.index}. {g.name} {g.is18Plus ? '(18+ Only)' : ''}
@@ -766,10 +974,19 @@ export const AdminDashboard: React.FC = () => {
                           </button>
                         </td>
 
-                        <td className="py-3.5 text-right">
+                        <td className="py-3.5 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setEditingAd(ad)}
+                            title="Edit Ad Texts & Image"
+                            className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-white transition-colors mr-1 cursor-pointer"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
                           <button
                             onClick={() => deleteAdCampaign(ad.id)}
-                            className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-red-400 transition-colors"
+                            title="Delete Ad Campaign"
+                            className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-red-400 transition-colors cursor-pointer"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -781,6 +998,154 @@ export const AdminDashboard: React.FC = () => {
               </table>
             </div>
           </div>
+
+          {/* EDIT AD CAMPAIGN MODAL */}
+          {editingAd && (
+            <div
+              onClick={() => setEditingAd(null)}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-950 p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto"
+              >
+                <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                  <h4 className="font-heading text-sm font-bold text-white">
+                    Edit Ad Campaign Text &amp; Image
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setEditingAd(null)}
+                    className="rounded-lg bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:text-white cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <div className="space-y-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-neutral-400 mb-1">Campaign Title</label>
+                      <input
+                        type="text"
+                        value={editingAd.title}
+                        onChange={(e) => setEditingAd({ ...editingAd, title: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-neutral-400 mb-1">Brand Name</label>
+                      <input
+                        type="text"
+                        value={editingAd.brandName}
+                        onChange={(e) => setEditingAd({ ...editingAd, brandName: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-neutral-400 mb-1">Ad Headline</label>
+                    <input
+                      type="text"
+                      value={editingAd.headline}
+                      onChange={(e) => setEditingAd({ ...editingAd, headline: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-neutral-400 mb-1">Ad Tagline / Body Copy</label>
+                    <textarea
+                      rows={2}
+                      value={editingAd.tagline}
+                      onChange={(e) => setEditingAd({ ...editingAd, tagline: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-neutral-400 mb-1">CTA Button Text</label>
+                      <input
+                        type="text"
+                        value={editingAd.ctaText}
+                        onChange={(e) => setEditingAd({ ...editingAd, ctaText: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-neutral-400 mb-1">CTA Destination URL</label>
+                      <input
+                        type="text"
+                        value={editingAd.ctaUrl}
+                        onChange={(e) => setEditingAd({ ...editingAd, ctaUrl: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-neutral-400 mb-1">
+                      Ad Banner Image (Optional — Upload or Paste URL)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="https://... or upload image"
+                        value={editingAd.bannerImageUrl || ''}
+                        onChange={(e) =>
+                          setEditingAd({ ...editingAd, bannerImageUrl: e.target.value })
+                        }
+                        className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      />
+                      <input
+                        ref={adBannerInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setIsUploadingAdBanner(true);
+                          try {
+                            const url = await uploadMediaFile(file, file.name);
+                            setEditingAd((prev) => (prev ? { ...prev, bannerImageUrl: url } : null));
+                            showToast('Ad banner image uploaded!');
+                          } catch {
+                            showToast('Failed to upload ad banner image.');
+                          } finally {
+                            setIsUploadingAdBanner(false);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={isUploadingAdBanner}
+                        onClick={() => adBannerInputRef.current?.click()}
+                        className="rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-700 cursor-pointer shrink-0"
+                      >
+                        {isUploadingAdBanner ? 'Uploading...' : 'Upload Image'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 border-t border-neutral-800 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateAdCampaign(editingAd.id, editingAd);
+                      setEditingAd(null);
+                    }}
+                    className="rounded-xl bg-rose-600 px-5 py-2 text-xs font-bold text-white hover:bg-rose-500 cursor-pointer"
+                  >
+                    Save Ad Changes
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -799,7 +1164,7 @@ export const AdminDashboard: React.FC = () => {
                   <span>Publish New Video to Platform</span>
                 </h2>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Distribute video streams across any of the 7 channels (including Channel 7: 18+ Mature with strict age gating).
+                  Publish uploaded video files, YouTube links (views sync directly to YouTube), or direct URLs across all {videoGroups.length} channels including Mixed Video, Movies, and 18+ Mature.
                 </p>
               </div>
 
@@ -819,16 +1184,43 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
+            {/* Quick Share New Post Updates to Followers */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-emerald-950/15 px-4 py-2.5 text-xs">
+              <span className="text-neutral-300">
+                Notify followers about new video posts or engage in comments:
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={siteConfig.whatsappChannelUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/40 px-3 py-1 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-600/30 transition-colors"
+                >
+                  <span>WhatsApp Updates Channel</span>
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+                <a
+                  href={siteConfig.telegramGroupUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600/20 border border-sky-500/40 px-3 py-1 text-[11px] font-semibold text-sky-300 hover:bg-sky-600/30 transition-colors"
+                >
+                  <span>Telegram Comments Group</span>
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            </div>
+
             <form onSubmit={handlePostVideo} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Title */}
                 <div>
                   <label className="block text-xs font-semibold text-neutral-300 mb-1">
-                    Video Title *
+                    Video Title {uploadMode === 'youtube' ? '(Auto-filled from YouTube)' : '*'}
                   </label>
                   <input
                     type="text"
-                    required
+                    required={uploadMode !== 'youtube'}
                     placeholder="e.g. Deep Neural Architectures in 2026"
                     value={videoTitle}
                     onChange={(e) => setVideoTitle(e.target.value)}
@@ -875,7 +1267,7 @@ export const AdminDashboard: React.FC = () => {
                   <span className="text-xs font-semibold text-neutral-200">
                     Video Upload Source *
                   </span>
-                  <div className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
+                  <div className="flex flex-wrap items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
                     <button
                       type="button"
                       onClick={() => setUploadMode('file')}
@@ -890,6 +1282,18 @@ export const AdminDashboard: React.FC = () => {
                     </button>
                     <button
                       type="button"
+                      onClick={() => setUploadMode('youtube')}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                        uploadMode === 'youtube'
+                          ? 'bg-red-600 text-white shadow'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <Youtube className="h-3.5 w-3.5" />
+                      <span>Paste YouTube Link</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setUploadMode('url')}
                       className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                         uploadMode === 'url'
@@ -898,7 +1302,7 @@ export const AdminDashboard: React.FC = () => {
                       }`}
                     >
                       <LinkIcon className="h-3.5 w-3.5" />
-                      <span>Paste Any Video / YouTube URL</span>
+                      <span>Direct Video URL</span>
                     </button>
                   </div>
                 </div>
@@ -961,16 +1365,81 @@ export const AdminDashboard: React.FC = () => {
                       </span>
                     )}
                   </div>
+                ) : uploadMode === 'youtube' ? (
+                  <div className="space-y-3">
+                    <label className="block text-xs font-semibold text-neutral-300">
+                      Paste YouTube Video Link (Watch, Shorts, Live, or Share URL) *
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..."
+                        value={videoUrl}
+                        onChange={(e) => handleVideoUrlInputChange(e.target.value)}
+                        className="flex-1 rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-xs text-white focus:border-red-500 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={!getYouTubeId(videoUrl) || isFetchingYoutube}
+                        onClick={() => fetchYouTubeMetadata(videoUrl, true)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-500/40 bg-red-950/40 px-4 py-2 text-xs font-semibold text-red-300 hover:bg-red-900/50 disabled:opacity-40 cursor-pointer shrink-0"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${isFetchingYoutube ? 'animate-spin' : ''}`} />
+                        <span>{isFetchingYoutube ? 'Syncing...' : 'Sync YouTube Info'}</span>
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-neutral-400">
+                      Automatically pulls title, channel, and HD thumbnail. Playback uses the official YouTube embed player so every view through this website counts directly on YouTube.
+                    </p>
+
+                    {youtubePreview && (
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 rounded-xl border border-red-500/30 bg-red-950/20 p-3">
+                        <img
+                          src={youtubePreview.thumbnailUrl}
+                          alt={youtubePreview.title}
+                          className="h-16 w-28 rounded-lg object-cover border border-neutral-800 shrink-0"
+                        />
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
+                              YouTube Synced
+                            </span>
+                            <span className="font-mono text-[10px] text-neutral-400">
+                              ID: {youtubePreview.videoId}
+                            </span>
+                            {youtubePreview.viewCount !== null && (
+                              <span className="text-[10px] font-mono text-emerald-400">
+                                {youtubePreview.viewCount.toLocaleString()} YouTube views
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs font-bold text-white truncate">{youtubePreview.title}</p>
+                          <p className="text-[11px] text-neutral-400 truncate">
+                            Channel: {youtubePreview.authorName}
+                          </p>
+                        </div>
+                        <a
+                          href={youtubePreview.watchUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-neutral-800 shrink-0"
+                        >
+                          <span>Open on YouTube</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
+                    )}
+                  </div>
                 ) : (
-                  <div>
-                    <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-neutral-300">
                       Video URL (Direct MP4 / WebM / MOV, YouTube, or Vimeo Link) *
                     </label>
                     <input
                       type="text"
-                      placeholder="https://youtube.com/watch?v=... or https://example.com/video.mp4"
+                      placeholder="https://example.com/video.mp4 or https://youtube.com/watch?v=..."
                       value={videoUrl}
-                      onChange={(e) => setVideoUrl(e.target.value)}
+                      onChange={(e) => handleVideoUrlInputChange(e.target.value)}
                       className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-xs text-white focus:border-rose-500 focus:outline-none"
                     />
                   </div>
@@ -1190,10 +1659,19 @@ export const AdminDashboard: React.FC = () => {
                           </button>
                         </td>
 
-                        <td className="py-3 text-right">
+                        <td className="py-3 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setEditingVideo(vid)}
+                            title="Edit Video Title, Description & Image"
+                            className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-white mr-1 cursor-pointer"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
                           <button
                             onClick={() => deleteVideo(vid.id)}
-                            className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-red-400"
+                            title="Delete Video"
+                            className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-red-400 cursor-pointer"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -1205,6 +1683,219 @@ export const AdminDashboard: React.FC = () => {
               </table>
             </div>
           </div>
+
+          {/* EDIT ANY VIDEO MODAL */}
+          {editingVideo && (
+            <div
+              onClick={() => setEditingVideo(null)}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-2xl rounded-2xl border border-neutral-800 bg-neutral-950 p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto"
+              >
+                <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                  <h4 className="font-heading text-sm font-bold text-white">
+                    Edit Video Texts, Image &amp; Settings
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setEditingVideo(null)}
+                    className="rounded-lg bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:text-white cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <div className="space-y-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-neutral-400 mb-1">Video Title</label>
+                      <input
+                        type="text"
+                        value={editingVideo.title}
+                        onChange={(e) =>
+                          setEditingVideo({ ...editingVideo, title: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-neutral-400 mb-1">Channel / Group</label>
+                      <select
+                        value={editingVideo.groupId}
+                        onChange={(e) => {
+                          const grp = videoGroups.find((g) => g.id === e.target.value);
+                          setEditingVideo({
+                            ...editingVideo,
+                            groupId: e.target.value,
+                            is18Plus: grp ? grp.is18Plus : editingVideo.is18Plus,
+                          });
+                        }}
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      >
+                        {videoGroups.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.index}. {g.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-neutral-400 mb-1">Description</label>
+                    <textarea
+                      rows={3}
+                      value={editingVideo.description}
+                      onChange={(e) =>
+                        setEditingVideo({ ...editingVideo, description: e.target.value })
+                      }
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-neutral-400 mb-1">
+                      Thumbnail Image (Upload New Image or Paste URL)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editingVideo.thumbnailUrl}
+                        onChange={(e) =>
+                          setEditingVideo({ ...editingVideo, thumbnailUrl: e.target.value })
+                        }
+                        className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      />
+                      <input
+                        ref={editThumbInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setIsUploadingEditThumb(true);
+                          try {
+                            const url = await uploadMediaFile(file, file.name);
+                            setEditingVideo((prev) =>
+                              prev ? { ...prev, thumbnailUrl: url } : null
+                            );
+                            showToast('Video thumbnail image updated!');
+                          } catch {
+                            showToast('Failed to upload thumbnail image.');
+                          } finally {
+                            setIsUploadingEditThumb(false);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={isUploadingEditThumb}
+                        onClick={() => editThumbInputRef.current?.click()}
+                        className="rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-700 cursor-pointer shrink-0"
+                      >
+                        {isUploadingEditThumb ? 'Uploading...' : 'Upload Image'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-neutral-400 mb-1">Creator / Publisher</label>
+                      <input
+                        type="text"
+                        value={editingVideo.creatorName}
+                        onChange={(e) =>
+                          setEditingVideo({ ...editingVideo, creatorName: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-neutral-400 mb-1">Duration</label>
+                      <input
+                        type="text"
+                        value={editingVideo.duration}
+                        onChange={(e) =>
+                          setEditingVideo({ ...editingVideo, duration: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-neutral-400 mb-1">Required Tier</label>
+                      <select
+                        value={editingVideo.requiredTier}
+                        onChange={(e) =>
+                          setEditingVideo({
+                            ...editingVideo,
+                            requiredTier: e.target.value as SubscriptionTierId,
+                          })
+                        }
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                      >
+                        <option value="free">Free</option>
+                        <option value="pro">Pro</option>
+                        <option value="vip">VIP</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-neutral-400 mb-1">Video Stream URL / YouTube Link</label>
+                    <input
+                      type="text"
+                      value={editingVideo.videoUrl}
+                      onChange={(e) =>
+                        setEditingVideo({ ...editingVideo, videoUrl: e.target.value })
+                      }
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-5 pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(editingVideo.featured)}
+                        onChange={(e) =>
+                          setEditingVideo({ ...editingVideo, featured: e.target.checked })
+                        }
+                        className="rounded border-neutral-700 bg-neutral-900 text-rose-600"
+                      />
+                      <span>Featured in Hero</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-red-300">
+                      <input
+                        type="checkbox"
+                        checked={editingVideo.is18Plus}
+                        onChange={(e) =>
+                          setEditingVideo({ ...editingVideo, is18Plus: e.target.checked })
+                        }
+                        className="rounded border-neutral-700 bg-neutral-900 text-red-600"
+                      />
+                      <span>18+ Blurred &amp; Restricted</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 border-t border-neutral-800 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateVideo(editingVideo.id, editingVideo);
+                      setEditingVideo(null);
+                    }}
+                    className="rounded-xl bg-rose-600 px-5 py-2 text-xs font-bold text-white hover:bg-rose-500 cursor-pointer"
+                  >
+                    Save Video Changes
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1336,7 +2027,7 @@ export const AdminDashboard: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 space-y-4">
               <h3 className="font-heading text-base font-bold text-white tracking-tight">
-                Views Breakdown Across 7 Channels
+                Views Breakdown Across {videoGroups.length} Channels
               </h3>
 
               <div className="space-y-3">
@@ -1492,17 +2183,17 @@ export const AdminDashboard: React.FC = () => {
                       </td>
 
                       <td className="py-3.5 pr-4">
-                        <span
-                          className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${
-                            user.subscriptionTier === 'vip'
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                              : user.subscriptionTier === 'pro'
-                              ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                              : 'bg-neutral-800 text-neutral-400'
-                          }`}
+                        <select
+                          value={user.subscriptionTier}
+                          onChange={(e) =>
+                            updateUserSubscription(user.id, e.target.value as SubscriptionTierId)
+                          }
+                          className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs font-semibold uppercase text-neutral-200 focus:outline-none"
                         >
-                          {user.subscriptionTier}
-                        </span>
+                          <option value="free">FREE</option>
+                          <option value="pro">PRO</option>
+                          <option value="vip">VIP</option>
+                        </select>
                       </td>
 
                       <td className="py-3.5 pr-4">
@@ -1594,7 +2285,7 @@ export const AdminDashboard: React.FC = () => {
 
             <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5 flex items-start justify-between gap-4">
               <div>
-                <h4 className="text-xs font-bold text-white">Strict Age Enforcement for Channel 7 (18+)</h4>
+                <h4 className="text-xs font-bold text-white">Strict Age Enforcement for 18+ Mature Channel</h4>
                 <p className="text-[11px] text-neutral-400 mt-1">
                   Enforces mandatory affirmation of age 18+ and verifies user birthdate prior to playback initiation.
                 </p>
@@ -1695,27 +2386,68 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t border-neutral-800 text-xs">
-              <label className="flex items-center gap-2 cursor-pointer text-neutral-300">
-                <input
-                  type="checkbox"
-                  checked={monetization.paymentGatewaySandbox}
-                  onChange={(e) =>
-                    updateMonetization({ paymentGatewaySandbox: e.target.checked })
-                  }
-                  className="rounded border-neutral-700 bg-neutral-950 text-rose-600 focus:ring-rose-500"
-                />
-                <span>Simulated Stripe Sandbox Gateway (instant test upgrades without real charges)</span>
-              </label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-neutral-800">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Subscription Payment Phone Number (Mobile Money)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={monetization.subscriptionPaymentPhone}
+                    onChange={(e) =>
+                      updateMonetization({ subscriptionPaymentPhone: e.target.value })
+                    }
+                    placeholder="+250781301598"
+                    className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2 text-xs text-emerald-400 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setAdminTab('payment-review')}
+                    className="shrink-0 rounded-lg border border-rose-500/40 bg-rose-950/30 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-900/40 cursor-pointer"
+                  >
+                    Payment Review ({paymentRequests.filter((r) => r.status === 'pending').length})
+                  </button>
+                </div>
+              </div>
 
-              <button
-                onClick={handleExportCsv}
-                className="text-rose-400 hover:underline flex items-center gap-1 font-semibold"
-              >
-                <Download className="h-3 w-3" />
-                <span>Export Revenue Ledger</span>
-              </button>
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Bitcoin / Crypto Wallet Address (USDT TRC-20)
+                </label>
+                <input
+                  type="text"
+                  value={monetization.usdtTrc20Address || 'TAVQFaWipQzMamBjhAKiU83d67gTYKc1wK'}
+                  onChange={(e) =>
+                    updateMonetization({ usdtTrc20Address: e.target.value })
+                  }
+                  placeholder="TAVQFaWipQzMamBjhAKiU83d67gTYKc1wK"
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2 text-xs text-amber-400 font-mono"
+                />
+              </div>
             </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-4 text-xs pt-2 border-t border-neutral-800">
+                <label className="flex items-center gap-2 cursor-pointer text-neutral-300 pb-2">
+                  <input
+                    type="checkbox"
+                    checked={monetization.paymentGatewaySandbox}
+                    onChange={(e) =>
+                      updateMonetization({ paymentGatewaySandbox: e.target.checked })
+                    }
+                    className="rounded border-neutral-700 bg-neutral-950 text-rose-600 focus:ring-rose-500"
+                  />
+                  <span>Require Manual Payment Review Approval for Paid Tiers</span>
+                </label>
+
+                <button
+                  onClick={handleExportCsv}
+                  className="text-rose-400 hover:underline flex items-center gap-1 font-semibold shrink-0"
+                >
+                  <Download className="h-3 w-3" />
+                  <span>Export Revenue Ledger</span>
+                </button>
+              </div>
           </div>
 
           {/* Google AdSense Integration Controls */}
@@ -1782,107 +2514,1316 @@ export const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Manage the 3 Subscription Tiers */}
+          {/* Manage the 3 Subscription Tiers & Pricing */}
           <div className="space-y-4">
-            <h3 className="font-heading text-sm font-bold text-white">
-              Subscription Tiers Configuration
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="font-heading text-sm font-bold text-white">
+                  Subscription Tiers &amp; Price Editor
+                </h3>
+                <p className="text-[11px] text-neutral-400 mt-0.5">
+                  Adjust monthly and annual subscription prices in USD — local currency, Rwanda Mobile Money (RWF), and USDT TRC-20 amounts update automatically across the site.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => showToast('All subscription tier prices saved and synced live!')}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors cursor-pointer"
+              >
+                <Check className="h-3.5 w-3.5" />
+                <span>Save Subscription Prices</span>
+              </button>
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {subscriptionTiers.map((tier) => (
-                <div
-                  key={tier.id}
-                  className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5 space-y-4"
-                >
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-bold text-white text-sm">{tier.name}</h4>
-                    <span className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] font-bold uppercase text-neutral-400">
-                      {tier.id}
-                    </span>
+              {subscriptionTiers.map((tier) => {
+                const monthlyRwf = convertFromUsd(tier.priceMonthly, 'RWF', FALLBACK_EXCHANGE_RATES);
+                const yearlyRwf = convertFromUsd(tier.priceYearly, 'RWF', FALLBACK_EXCHANGE_RATES);
+
+                return (
+                  <div
+                    key={tier.id}
+                    className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5 space-y-4"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <input
+                        type="text"
+                        value={tier.name}
+                        onChange={(e) =>
+                          updateSubscriptionTier(tier.id, { name: e.target.value })
+                        }
+                        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 font-bold text-white text-sm hover:border-neutral-700 focus:border-rose-500 focus:bg-neutral-950 focus:outline-none"
+                      />
+                      <span className="shrink-0 rounded bg-neutral-800 px-2 py-0.5 text-[10px] font-bold uppercase text-neutral-400">
+                        {tier.id}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div>
+                        <label className="block text-neutral-400 text-[11px] mb-1">
+                          Badge Label
+                        </label>
+                        <input
+                          type="text"
+                          value={tier.badge}
+                          onChange={(e) =>
+                            updateSubscriptionTier(tier.id, { badge: e.target.value })
+                          }
+                          className="w-full rounded border border-neutral-700 bg-neutral-950 p-1.5 text-white text-xs focus:border-rose-500 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-neutral-400 text-[11px] mb-1">
+                          Plan Description
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={tier.description}
+                          onChange={(e) =>
+                            updateSubscriptionTier(tier.id, { description: e.target.value })
+                          }
+                          className="w-full rounded border border-neutral-700 bg-neutral-950 p-1.5 text-white text-[11px] focus:border-rose-500 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-neutral-400 text-[11px] mb-1">
+                          Features List (One per line)
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={tier.features.join('\n')}
+                          onChange={(e) =>
+                            updateSubscriptionTier(tier.id, {
+                              features: e.target.value.split('\n').filter((f) => f.trim().length > 0),
+                            })
+                          }
+                          className="w-full rounded border border-neutral-700 bg-neutral-950 p-1.5 text-neutral-200 text-[11px] focus:border-rose-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 text-xs">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-neutral-400 text-[11px]">
+                            Monthly Price (USD $)
+                          </label>
+                          <span className="font-mono text-[10px] text-emerald-400">
+                            ≈ {monthlyRwf.toLocaleString()} RWF / {tier.priceMonthly.toFixed(2)} USDT
+                          </span>
+                        </div>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          value={tier.priceMonthly}
+                          onChange={(e) =>
+                            updateSubscriptionTier(tier.id, {
+                              priceMonthly: Math.max(0, parseFloat(e.target.value) || 0),
+                            })
+                          }
+                          className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 font-mono text-white focus:border-rose-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-neutral-400 text-[11px]">
+                            Annual Price (USD $)
+                          </label>
+                          <span className="font-mono text-[10px] text-emerald-400">
+                            ≈ {yearlyRwf.toLocaleString()} RWF / {tier.priceYearly.toFixed(2)} USDT
+                          </span>
+                        </div>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          value={tier.priceYearly}
+                          onChange={(e) =>
+                            updateSubscriptionTier(tier.id, {
+                              priceYearly: Math.max(0, parseFloat(e.target.value) || 0),
+                            })
+                          }
+                          className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 font-mono text-white focus:border-rose-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-neutral-400 text-[11px] mb-1">
+                          Max Streaming Quality
+                        </label>
+                        <select
+                          value={tier.maxQuality}
+                          onChange={(e) =>
+                            updateSubscriptionTier(tier.id, {
+                              maxQuality: e.target.value as any,
+                            })
+                          }
+                          className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 text-white"
+                        >
+                          <option value="720p">720p HD</option>
+                          <option value="1080p Full HD">1080p Full HD</option>
+                          <option value="4K Ultra HD">4K Ultra HD</option>
+                        </select>
+                      </div>
+
+                      <div className="pt-2 border-t border-neutral-800 space-y-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={tier.active}
+                            onChange={(e) =>
+                              updateSubscriptionTier(tier.id, { active: e.target.checked })
+                            }
+                            className="rounded border-neutral-700 bg-neutral-950 text-rose-600"
+                          />
+                          <span>Plan Active &amp; Visible to Users</span>
+                        </label>
+
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={tier.adFree}
+                            onChange={(e) =>
+                              updateSubscriptionTier(tier.id, { adFree: e.target.checked })
+                            }
+                            className="rounded border-neutral-700 bg-neutral-950 text-rose-600"
+                          />
+                          <span>100% Ad-Free Playback</span>
+                        </label>
+
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={tier.allows18Plus}
+                            onChange={(e) =>
+                              updateSubscriptionTier(tier.id, { allows18Plus: e.target.checked })
+                            }
+                            className="rounded border-neutral-700 bg-neutral-950 text-rose-600"
+                          />
+                          <span>18+ Mature Vault Access</span>
+                        </label>
+
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={tier.allowsDownloads !== false}
+                            onChange={(e) =>
+                              updateSubscriptionTier(tier.id, { allowsDownloads: e.target.checked })
+                            }
+                            className="rounded border-neutral-700 bg-neutral-950 text-rose-600"
+                          />
+                          <span>Video Downloads Enabled</span>
+                        </label>
+                      </div>
+                    </div>
                   </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
-                  <div className="space-y-3 text-xs">
-                    <div>
-                      <label className="block text-neutral-400 text-[11px] mb-1">
-                        Monthly Price ($)
-                      </label>
+      {/* ========================================================================= */}
+      {/* MODULE 7: PAYMENT REVIEW & SUBSCRIPTION APPROVAL */}
+      {/* ========================================================================= */}
+      {adminTab === 'payment-review' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800 pb-4">
+            <div>
+              <h2 className="font-heading text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                <CreditCard className="h-5 w-5 text-rose-500" />
+                <span>Payment Review & Subscription Approval</span>
+              </h2>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Verify Mobile Money transfers to{' '}
+                <strong className="text-emerald-400 font-mono">
+                  {monetization.subscriptionPaymentPhone || '+250781301598'}
+                </strong>{' '}
+                or USDT (TRC-20) transfers to{' '}
+                <strong className="text-amber-400 font-mono">
+                  {monetization.usdtTrc20Address || 'TAVQFaWipQzMamBjhAKiU83d67gTYKc1wK'}
+                </strong>
+                .
+              </p>
+            </div>
+
+            <div className="flex items-center gap-1.5 rounded-xl border border-neutral-800 bg-neutral-950 p-1">
+              {(['pending', 'approved', 'rejected', 'all'] as const).map((status) => {
+                const count =
+                  status === 'all'
+                    ? paymentRequests.length
+                    : paymentRequests.filter((r) => r.status === status).length;
+                return (
+                  <button
+                    key={status}
+                    onClick={() => setPaymentStatusFilter(status)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition-colors cursor-pointer ${
+                      paymentStatusFilter === status
+                        ? 'bg-rose-600 text-white'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    {status} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Summary KPI Row */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[11px] text-neutral-400">Collection Accounts</p>
+                <p className="font-mono text-sm font-bold text-emerald-400 mt-0.5">
+                  {monetization.subscriptionPaymentPhone || '+250781301598'}
+                </p>
+                <p className="font-mono text-[10px] text-amber-400 truncate mt-0.5" title={monetization.usdtTrc20Address || 'TAVQFaWipQzMamBjhAKiU83d67gTYKc1wK'}>
+                  TRC-20: {monetization.usdtTrc20Address || 'TAVQFaWipQzMamBjhAKiU83d67gTYKc1wK'}
+                </p>
+              </div>
+              <Phone className="h-5 w-5 text-emerald-500 shrink-0" />
+            </div>
+
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 flex items-center justify-between">
+              <div>
+                <p className="text-[11px] text-neutral-400">Awaiting Approval</p>
+                <p className="font-mono text-base font-bold text-amber-400 mt-0.5">
+                  {paymentRequests.filter((r) => r.status === 'pending').length} Requests
+                </p>
+              </div>
+              <Clock className="h-5 w-5 text-amber-400" />
+            </div>
+
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 flex items-center justify-between">
+              <div>
+                <p className="text-[11px] text-neutral-400">Approved Sub Total</p>
+                <p className="font-mono text-base font-bold text-white mt-0.5">
+                  $
+                  {paymentRequests
+                    .filter((r) => r.status === 'approved')
+                    .reduce((sum, r) => sum + r.amount, 0)
+                    .toFixed(2)}
+                </p>
+              </div>
+              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+            </div>
+          </div>
+
+          {/* Payment Requests Table */}
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6">
+            {paymentRequests.filter(
+              (r) => paymentStatusFilter === 'all' || r.status === paymentStatusFilter
+            ).length === 0 ? (
+              <div className="py-10 text-center text-xs text-neutral-400">
+                No {paymentStatusFilter === 'all' ? '' : paymentStatusFilter} subscription payment requests found.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-neutral-800 text-neutral-400">
+                      <th className="pb-3 font-semibold">Subscriber</th>
+                      <th className="pb-3 font-semibold">Plan & Converted Amount</th>
+                      <th className="pb-3 font-semibold">Paid To</th>
+                      <th className="pb-3 font-semibold">Sender Details</th>
+                      <th className="pb-3 font-semibold">Screenshot</th>
+                      <th className="pb-3 font-semibold">Status</th>
+                      <th className="pb-3 font-semibold text-right">Review Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-800/60">
+                    {paymentRequests
+                      .filter(
+                        (r) => paymentStatusFilter === 'all' || r.status === paymentStatusFilter
+                      )
+                      .map((req) => (
+                        <tr key={req.id} className="hover:bg-neutral-800/30 transition-colors">
+                          <td className="py-3.5 pr-4">
+                            <p className="font-semibold text-white">{req.userName}</p>
+                            <p className="text-[11px] text-neutral-400">{req.userEmail}</p>
+                            {req.note && (
+                              <p className="text-[10px] text-neutral-500 mt-0.5 max-w-xs truncate">
+                                Note: {req.note}
+                              </p>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 pr-4">
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span
+                                className={`inline-block rounded px-2 py-0.5 text-[10px] font-bold uppercase ${
+                                  req.requestedTier === 'vip'
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                }`}
+                              >
+                                {req.requestedTier} · {req.billingCycle}
+                              </span>
+                              <span
+                                className={`inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                                  req.paymentMethod === 'usdt_trc20'
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                }`}
+                              >
+                                {req.paymentMethod === 'usdt_trc20' ? 'USDT TRC-20' : 'MoMo'}
+                              </span>
+                            </div>
+                            <p
+                              className={`font-mono font-bold mt-1 tabular-nums ${
+                                req.paymentMethod === 'usdt_trc20' ? 'text-amber-400' : 'text-emerald-400'
+                              }`}
+                            >
+                              {req.paymentMethod === 'usdt_trc20'
+                                ? `${(req.usdtAmount ?? req.amount).toFixed(2)} USDT`
+                                : req.rwfAmount
+                                ? `${req.rwfAmount.toLocaleString()} RWF`
+                                : `$${req.amount.toFixed(2)}`}
+                            </p>
+                            <p className="text-[10px] text-neutral-400 font-mono">
+                              {req.localAmount && req.localCurrency && req.localCurrency !== 'RWF'
+                                ? `${req.localAmount.toLocaleString()} ${req.localCurrency} (${req.countryName || ''}) · `
+                                : ''}
+                              ${req.amount.toFixed(2)} USD
+                            </p>
+                          </td>
+
+                          <td className="py-3.5 pr-4 font-mono max-w-[170px] truncate" title={req.recipientNumber}>
+                            <span
+                              className={
+                                req.paymentMethod === 'usdt_trc20' ? 'text-amber-400' : 'text-emerald-400'
+                              }
+                            >
+                              {req.recipientNumber}
+                            </span>
+                          </td>
+
+                          <td className="py-3.5 pr-4">
+                            <p className="font-semibold text-white">
+                              {req.senderName || req.userName}
+                            </p>
+                            <p className="font-mono text-neutral-300">{req.senderPhone}</p>
+                            {req.transactionId && (
+                              <p className="font-mono text-[11px] text-neutral-400">
+                                Ref: {req.transactionId}
+                              </p>
+                            )}
+                            <p className="text-[10px] text-neutral-500">{req.createdAt}</p>
+                          </td>
+
+                          <td className="py-3.5 pr-4">
+                            {req.screenshotUrl ? (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewScreenshotUrl(req.screenshotUrl || null)}
+                                className="group relative inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-950 p-1 hover:border-rose-500/50 cursor-pointer"
+                                title="View Payment Screenshot"
+                              >
+                                <img
+                                  src={req.screenshotUrl}
+                                  alt={`Payment proof from ${req.senderName}`}
+                                  className="h-10 w-14 rounded object-cover"
+                                />
+                                <span className="px-1.5 text-[10px] font-semibold text-neutral-300 group-hover:text-white">
+                                  View
+                                </span>
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-neutral-500">No image</span>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 pr-4">
+                            <span
+                              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold uppercase ${
+                                req.status === 'approved'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  : req.status === 'rejected'
+                                  ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              }`}
+                            >
+                              {req.status === 'pending'
+                                ? 'Pending Review'
+                                : req.status === 'approved'
+                                ? 'Approved'
+                                : 'Rejected'}
+                            </span>
+                            {req.reviewedAt && (
+                              <p className="text-[10px] text-neutral-500 mt-1">
+                                Reviewed {req.reviewedAt}
+                              </p>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 text-right">
+                            {req.status === 'pending' ? (
+                              <div className="inline-flex items-center gap-2">
+                                <button
+                                  onClick={() => approvePaymentRequest(req.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-500 transition-colors cursor-pointer"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                  <span>Approve</span>
+                                </button>
+                                <button
+                                  onClick={() => rejectPaymentRequest(req.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-red-500/40 bg-red-950/30 px-3 py-1.5 text-[11px] font-semibold text-red-300 hover:bg-red-900/40 transition-colors cursor-pointer"
+                                >
+                                  <XCircle className="h-3.5 w-3.5" />
+                                  <span>Reject</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-neutral-500 italic">
+                                Completed
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Screenshot Lightbox Preview Modal */}
+          {previewScreenshotUrl && (
+            <div
+              onClick={() => setPreviewScreenshotUrl(null)}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="relative max-w-2xl w-full rounded-2xl border border-neutral-800 bg-neutral-900 p-4 space-y-3 shadow-2xl"
+              >
+                <div className="flex items-center justify-between border-b border-neutral-800 pb-2">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Payment Screenshot Proof
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewScreenshotUrl(null)}
+                    className="rounded-lg bg-neutral-800 px-2.5 py-1 text-xs font-semibold text-neutral-300 hover:text-white cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+                <img
+                  src={previewScreenshotUrl}
+                  alt="Uploaded payment proof"
+                  className="max-h-[75vh] w-full rounded-xl object-contain bg-black"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODULE 8: FULL WEBSITE CMS (EDIT ALL TEXTS, IMAGES & CHANNELS) */}
+      {/* ========================================================================= */}
+      {adminTab === 'site-editor' && (
+        <div className="space-y-8 animate-in fade-in duration-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800 pb-4">
+            <div>
+              <h2 className="font-heading text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                <LayoutTemplate className="h-5 w-5 text-rose-500" />
+                <span>Website Texts, Images &amp; Channel Editor</span>
+              </h2>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Change any headline, slogan, logo image, hero cover image, channel name, community link, or footer copy across the entire website in real time.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={resetSiteConfig}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-800 hover:text-white cursor-pointer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Reset Defaults</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => showToast('All website texts and images are saved and live!')}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 cursor-pointer"
+              >
+                <Check className="h-3.5 w-3.5" />
+                <span>Save All Changes</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 1. Brand Identity, Logo Image & Slogan */}
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 space-y-4">
+            <h3 className="font-heading text-sm font-bold text-white">
+              1. Brand Identity, Logo Image &amp; Slogan
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Website Name</label>
+                <input
+                  type="text"
+                  value={siteConfig.siteName}
+                  onChange={(e) => updateSiteConfig({ siteName: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Website Slogan</label>
+                <input
+                  type="text"
+                  value={siteConfig.siteSlogan}
+                  onChange={(e) => updateSiteConfig({ siteSlogan: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="text-xs space-y-2">
+              <label className="block font-semibold text-neutral-300">
+                Brand Logo Image (Upload from Device or Paste Image URL — Leave blank for default icon)
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                {siteConfig.siteLogoUrl && (
+                  <img
+                    src={siteConfig.siteLogoUrl}
+                    alt="Site logo preview"
+                    className="h-10 w-10 rounded-lg object-cover border border-neutral-700 shrink-0"
+                  />
+                )}
+                <input
+                  type="text"
+                  placeholder="https://... or upload logo image"
+                  value={siteConfig.siteLogoUrl}
+                  onChange={(e) => updateSiteConfig({ siteLogoUrl: e.target.value })}
+                  className="flex-1 min-w-[200px] rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                />
+                <input
+                  ref={siteLogoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setIsUploadingLogo(true);
+                    try {
+                      const url = await uploadMediaFile(file, file.name);
+                      updateSiteConfig({ siteLogoUrl: url });
+                      showToast('Website logo image updated!');
+                    } catch {
+                      showToast('Failed to upload logo image.');
+                    } finally {
+                      setIsUploadingLogo(false);
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={isUploadingLogo}
+                  onClick={() => siteLogoInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2.5 text-xs font-semibold text-white hover:bg-neutral-700 cursor-pointer"
+                >
+                  <ImageIcon className="h-3.5 w-3.5 text-rose-400" />
+                  <span>{isUploadingLogo ? 'Uploading...' : 'Upload Logo'}</span>
+                </button>
+                {siteConfig.siteLogoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => updateSiteConfig({ siteLogoUrl: '' })}
+                    className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-xs text-neutral-400 hover:text-white cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Hero Billboard Texts & Cover Image */}
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 space-y-4">
+            <h3 className="font-heading text-sm font-bold text-white">
+              2. Homepage Hero Texts &amp; Banner Image
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Hero Badge Text</label>
+                <input
+                  type="text"
+                  value={siteConfig.heroBadgeText}
+                  onChange={(e) => updateSiteConfig({ heroBadgeText: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Hero Watch Button Text</label>
+                <input
+                  type="text"
+                  value={siteConfig.heroWatchButtonText}
+                  onChange={(e) => updateSiteConfig({ heroWatchButtonText: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="text-xs space-y-3">
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">
+                  Custom Hero Headline Override (Leave blank to show Featured Video title automatically)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Optional custom homepage hero title..."
+                  value={siteConfig.heroCustomTitle}
+                  onChange={(e) => updateSiteConfig({ heroCustomTitle: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">
+                  Custom Hero Description Override (Leave blank to show Featured Video description)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Optional custom hero synopsis..."
+                  value={siteConfig.heroCustomDescription}
+                  onChange={(e) => updateSiteConfig({ heroCustomDescription: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">
+                  Custom Hero Preview Image (Upload Image or Paste URL — Leave blank for Featured Video thumbnail)
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {siteConfig.heroBannerImageUrl && (
+                    <img
+                      src={siteConfig.heroBannerImageUrl}
+                      alt="Hero banner preview"
+                      className="h-12 w-20 rounded-lg object-cover border border-neutral-700 shrink-0"
+                    />
+                  )}
+                  <input
+                    type="text"
+                    placeholder="https://... or upload hero cover image"
+                    value={siteConfig.heroBannerImageUrl}
+                    onChange={(e) => updateSiteConfig({ heroBannerImageUrl: e.target.value })}
+                    className="flex-1 min-w-[200px] rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                  />
+                  <input
+                    ref={heroBannerInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setIsUploadingHeroBanner(true);
+                      try {
+                        const url = await uploadMediaFile(file, file.name);
+                        updateSiteConfig({ heroBannerImageUrl: url });
+                        showToast('Hero cover image uploaded!');
+                      } catch {
+                        showToast('Failed to upload hero image.');
+                      } finally {
+                        setIsUploadingHeroBanner(false);
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={isUploadingHeroBanner}
+                    onClick={() => heroBannerInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2.5 text-xs font-semibold text-white hover:bg-neutral-700 cursor-pointer"
+                  >
+                    <ImageIcon className="h-3.5 w-3.5 text-rose-400" />
+                    <span>{isUploadingHeroBanner ? 'Uploading...' : 'Upload Hero Image'}</span>
+                  </button>
+                  {siteConfig.heroBannerImageUrl && (
+                    <button
+                      type="button"
+                      onClick={() => updateSiteConfig({ heroBannerImageUrl: '' })}
+                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-xs text-neutral-400 hover:text-white cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Channels & Section Headings Editor */}
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 space-y-5">
+            <h3 className="font-heading text-sm font-bold text-white">
+              3. Channels &amp; Categories Manager
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Channels Heading</label>
+                <input
+                  type="text"
+                  value={siteConfig.channelsSectionTitle}
+                  onChange={(e) => updateSiteConfig({ channelsSectionTitle: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Channels Subtitle</label>
+                <input
+                  type="text"
+                  value={siteConfig.channelsSectionSubtitle}
+                  onChange={(e) => updateSiteConfig({ channelsSectionSubtitle: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {videoGroups.map((group) => (
+                <div
+                  key={group.id}
+                  className="rounded-xl border border-neutral-800 bg-neutral-950/70 p-3.5 grid grid-cols-1 md:grid-cols-12 gap-3 items-center text-xs"
+                >
+                  <div className="md:col-span-3">
+                    <label className="block text-[10px] text-neutral-500 mb-0.5">
+                      Channel #{group.index} Name
+                    </label>
+                    <input
+                      type="text"
+                      value={group.name}
+                      onChange={(e) => updateVideoGroup(group.id, { name: e.target.value })}
+                      className="w-full rounded border border-neutral-700 bg-neutral-900 p-2 text-white font-semibold"
+                    />
+                  </div>
+                  <div className="md:col-span-6">
+                    <label className="block text-[10px] text-neutral-500 mb-0.5">
+                      Channel Description
+                    </label>
+                    <input
+                      type="text"
+                      value={group.description}
+                      onChange={(e) => updateVideoGroup(group.id, { description: e.target.value })}
+                      className="w-full rounded border border-neutral-700 bg-neutral-900 p-2 text-neutral-200"
+                    />
+                  </div>
+                  <div className="md:col-span-2 flex items-center gap-2 pt-3 md:pt-0">
+                    <label className="flex items-center gap-1.5 cursor-pointer text-red-300">
                       <input
-                        type="number"
-                        step={0.01}
-                        value={tier.priceMonthly}
+                        type="checkbox"
+                        checked={group.is18Plus}
                         onChange={(e) =>
-                          updateSubscriptionTier(tier.id, {
-                            priceMonthly: parseFloat(e.target.value) || 0,
-                          })
+                          updateVideoGroup(group.id, { is18Plus: e.target.checked })
                         }
-                        className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 font-mono text-white"
+                        className="rounded border-neutral-700 bg-neutral-900 text-red-600"
                       />
-                    </div>
-
-                    <div>
-                      <label className="block text-neutral-400 text-[11px] mb-1">
-                        Annual Price ($)
-                      </label>
-                      <input
-                        type="number"
-                        step={0.01}
-                        value={tier.priceYearly}
-                        onChange={(e) =>
-                          updateSubscriptionTier(tier.id, {
-                            priceYearly: parseFloat(e.target.value) || 0,
-                          })
-                        }
-                        className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 font-mono text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-neutral-400 text-[11px] mb-1">
-                        Max Streaming Quality
-                      </label>
-                      <select
-                        value={tier.maxQuality}
-                        onChange={(e) =>
-                          updateSubscriptionTier(tier.id, {
-                            maxQuality: e.target.value as any,
-                          })
-                        }
-                        className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 text-white"
-                      >
-                        <option value="720p">720p HD</option>
-                        <option value="1080p Full HD">1080p Full HD</option>
-                        <option value="4K Ultra HD">4K Ultra HD</option>
-                      </select>
-                    </div>
-
-                    <div className="pt-2 border-t border-neutral-800 space-y-2">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={tier.adFree}
-                          onChange={(e) =>
-                            updateSubscriptionTier(tier.id, { adFree: e.target.checked })
-                          }
-                          className="rounded border-neutral-700 bg-neutral-950 text-rose-600"
-                        />
-                        <span>100% Ad-Free Playback</span>
-                      </label>
-
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={tier.allows18Plus}
-                          onChange={(e) =>
-                            updateSubscriptionTier(tier.id, { allows18Plus: e.target.checked })
-                          }
-                          className="rounded border-neutral-700 bg-neutral-950 text-rose-600"
-                        />
-                        <span>Channel 7: 18+ Mature Access</span>
-                      </label>
-                    </div>
+                      <span>18+ Blur</span>
+                    </label>
+                  </div>
+                  <div className="md:col-span-1 text-right">
+                    <button
+                      type="button"
+                      onClick={() => deleteVideoGroup(group.id)}
+                      title="Remove Channel"
+                      className="rounded p-1.5 text-neutral-500 hover:bg-neutral-800 hover:text-red-400 cursor-pointer"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
               ))}
+            </div>
+
+            {/* Add New Channel */}
+            <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-950/40 p-4 space-y-3 text-xs">
+              <p className="font-semibold text-neutral-200">Add New Video Channel</p>
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                <input
+                  type="text"
+                  placeholder="Channel name (e.g. Sports, Comedy)..."
+                  value={newChannelName}
+                  onChange={(e) => setNewChannelName(e.target.value)}
+                  className="md:col-span-4 rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                />
+                <input
+                  type="text"
+                  placeholder="Channel description..."
+                  value={newChannelDesc}
+                  onChange={(e) => setNewChannelDesc(e.target.value)}
+                  className="md:col-span-5 rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-white"
+                />
+                <label className="md:col-span-1 flex items-center gap-1.5 cursor-pointer text-red-300">
+                  <input
+                    type="checkbox"
+                    checked={newChannelIs18Plus}
+                    onChange={(e) => setNewChannelIs18Plus(e.target.checked)}
+                    className="rounded border-neutral-700 bg-neutral-900 text-red-600"
+                  />
+                  <span>18+</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!newChannelName.trim()) {
+                      showToast('Enter a channel name first.');
+                      return;
+                    }
+                    addVideoGroup({
+                      name: newChannelName,
+                      description: newChannelDesc,
+                      is18Plus: newChannelIs18Plus,
+                      accentColor: newChannelColor,
+                    });
+                    setNewChannelName('');
+                    setNewChannelDesc('');
+                    setNewChannelIs18Plus(false);
+                  }}
+                  className="md:col-span-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-500 cursor-pointer"
+                >
+                  + Add Channel
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Community Pop-up, WhatsApp & Telegram Links */}
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 space-y-4 text-xs">
+            <h3 className="font-heading text-sm font-bold text-white">
+              4. Community Pop-up, WhatsApp &amp; Telegram Texts &amp; Links
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">
+                  WhatsApp Channel URL
+                </label>
+                <input
+                  type="text"
+                  value={siteConfig.whatsappChannelUrl}
+                  onChange={(e) => updateSiteConfig({ whatsappChannelUrl: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-emerald-400 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">
+                  Telegram Followers Group URL
+                </label>
+                <input
+                  type="text"
+                  value={siteConfig.telegramGroupUrl}
+                  onChange={(e) => updateSiteConfig({ telegramGroupUrl: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-sky-400 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">
+                  Pop-up Modal Title
+                </label>
+                <input
+                  type="text"
+                  value={siteConfig.communityPopupTitle}
+                  onChange={(e) => updateSiteConfig({ communityPopupTitle: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">
+                  Community Banner Title
+                </label>
+                <input
+                  type="text"
+                  value={siteConfig.communitySectionTitle}
+                  onChange={(e) => updateSiteConfig({ communitySectionTitle: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block font-semibold text-neutral-300 mb-1">
+                Pop-up Modal Description
+              </label>
+              <textarea
+                rows={2}
+                value={siteConfig.communityPopupDescription}
+                onChange={(e) => updateSiteConfig({ communityPopupDescription: e.target.value })}
+                className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-neutral-300 mb-1">
+                Community Banner Description
+              </label>
+              <textarea
+                rows={2}
+                value={siteConfig.communitySectionDescription}
+                onChange={(e) => updateSiteConfig({ communitySectionDescription: e.target.value })}
+                className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white"
+              />
+            </div>
+          </div>
+
+          {/* 5. Footer Texts */}
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 space-y-4 text-xs">
+            <h3 className="font-heading text-sm font-bold text-white">5. Footer Texts</h3>
+            <div>
+              <label className="block font-semibold text-neutral-300 mb-1">
+                Footer Mission Description
+              </label>
+              <textarea
+                rows={2}
+                value={siteConfig.footerDescription}
+                onChange={(e) => updateSiteConfig({ footerDescription: e.target.value })}
+                className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white"
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">
+                  Safety / Age Harbor Notice
+                </label>
+                <input
+                  type="text"
+                  value={siteConfig.footerSafeHarborText}
+                  onChange={(e) => updateSiteConfig({ footerSafeHarborText: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">
+                  Copyright Line
+                </label>
+                <input
+                  type="text"
+                  value={siteConfig.footerCopyright}
+                  onChange={(e) => updateSiteConfig({ footerCopyright: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 p-2.5 text-white"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODULE 9: AI STUDIO PROMPT WORKSPACE + EMBEDDED LIVE MAIN SITE PREVIEW */}
+      {/* ========================================================================= */}
+      {adminTab === 'ai-studio-prompt' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Header Bar */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-neutral-800 pb-4">
+            <div>
+              <h2 className="font-heading text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                <Wand2 className="h-5 w-5 text-indigo-400" />
+                <span>AI Studio Prompt — Live Website Editor</span>
+              </h2>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Describe any change to headlines, slogan, images, announcement banner, channels, or VIP/Pro prices and preview the main website live right here without leaving the Admin Dashboard.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {canUndoSitePrompt && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    undoLastSitePrompt();
+                    setPreviewKey((k) => k + 1);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-900/40 cursor-pointer"
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                  <span>Undo Last Change</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setPreviewKey((k) => k + 1)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-800 hover:text-white cursor-pointer"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span>Refresh Preview</span>
+              </button>
+
+              <a
+                href="https://aistudio.google.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-950/40 px-3.5 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-900/50 transition-colors"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span>Open aistudio.google.com</span>
+              </a>
+            </div>
+          </div>
+
+          {/* Split Workspace: Prompt Console + Embedded Live Website Preview */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+            {/* Left Column: Prompt Composer + Quick Actions + History */}
+            <div className="xl:col-span-5 space-y-5">
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setSitePromptError(null);
+                  setIsApplyingSitePrompt(true);
+                  try {
+                    const res = await applySitePrompt(sitePromptText, sitePromptAttachedImage || undefined);
+                    if (!res.success) {
+                      setSitePromptError(res.error || 'Could not apply prompt.');
+                    } else {
+                      setSitePromptText('');
+                      setSitePromptAttachedImage('');
+                      setPreviewKey((k) => k + 1);
+                    }
+                  } finally {
+                    setIsApplyingSitePrompt(false);
+                  }
+                }}
+                className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-5 space-y-4 shadow-xl"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Website Prompt Studio</span>
+                  </span>
+                  <span className="text-[10px] text-neutral-400">Instant Live Sync</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                    What would you like to change on the main website?
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={sitePromptText}
+                    onChange={(e) => setSitePromptText(e.target.value)}
+                    placeholder="e.g. Set announcement banner to: Weekend Movie Marathon Live Now!&#10;or: Change slogan to Videos That Inspire & set VIP monthly price to $12.99&#10;or: Add a new channel called Sports & Live"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 p-3 text-xs text-white placeholder-neutral-500 focus:border-indigo-500 focus:outline-none leading-relaxed"
+                  />
+                </div>
+
+                {/* Optional Image Upload Attachment for Hero / Logo */}
+                <div className="rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-neutral-300 flex items-center gap-1.5">
+                      <ImageIcon className="h-3.5 w-3.5 text-rose-400" />
+                      <span>Attach Image (Optional — Hero Cover or Brand Logo)</span>
+                    </span>
+                    <input
+                      ref={sitePromptImageInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setIsUploadingPromptImage(true);
+                        try {
+                          const url = await uploadMediaFile(file, file.name);
+                          setSitePromptAttachedImage(url);
+                          showToast('Image attached to prompt.');
+                        } catch {
+                          showToast('Failed to upload attached image.');
+                        } finally {
+                          setIsUploadingPromptImage(false);
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={isUploadingPromptImage}
+                      onClick={() => sitePromptImageInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-2.5 py-1 text-[11px] font-semibold text-neutral-200 hover:bg-neutral-700 cursor-pointer disabled:opacity-60"
+                    >
+                      <Upload className="h-3 w-3" />
+                      <span>{isUploadingPromptImage ? 'Uploading...' : 'Upload Image'}</span>
+                    </button>
+                  </div>
+
+                  {sitePromptAttachedImage && (
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-900 p-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <img
+                          src={sitePromptAttachedImage}
+                          alt="Attached prompt media"
+                          className="h-10 w-16 rounded object-cover border border-neutral-700 shrink-0"
+                        />
+                        <span className="text-[10px] text-emerald-400 truncate">
+                          Image ready — mention &quot;logo&quot; in prompt for logo, otherwise sets hero cover
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSitePromptAttachedImage('')}
+                        className="text-neutral-400 hover:text-rose-400 cursor-pointer shrink-0"
+                        title="Remove image"
+                      >
+                        <XCircle className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick Example Prompt Chips */}
+                <div className="space-y-1.5">
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                    Quick Prompt Examples
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      'Set announcement banner to: New HD Movies Added Today!',
+                      'Change slogan to: Videos For Everytime',
+                      'Set VIP monthly price to $14.99',
+                      'Add a new channel called Sports & Live',
+                      'Update hero title to: Stream Unlimited HD Premieres',
+                      'Hide announcement banner',
+                    ].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setSitePromptText(preset)}
+                        className="rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-1 text-[10px] text-neutral-300 hover:border-indigo-500/50 hover:text-white transition-colors cursor-pointer text-left"
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {sitePromptError && (
+                  <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-950/30 p-2.5 text-xs text-red-300">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{sitePromptError}</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isApplyingSitePrompt || (!sitePromptText.trim() && !sitePromptAttachedImage)}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-rose-600 py-2.5 px-4 text-xs font-bold text-white shadow-lg hover:from-indigo-500 hover:to-rose-500 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  <span>
+                    {isApplyingSitePrompt
+                      ? 'Applying Prompt to Main Website...'
+                      : 'Apply Prompt to Main Website'}
+                  </span>
+                </button>
+              </form>
+
+              {/* Prompt History Log */}
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300 flex items-center gap-1.5">
+                    <History className="h-3.5 w-3.5 text-indigo-400" />
+                    <span>Applied Prompt History ({sitePromptHistory.length})</span>
+                  </h3>
+                </div>
+
+                {sitePromptHistory.length === 0 ? (
+                  <p className="text-xs text-neutral-500 py-3">
+                    No AI prompts applied yet. Submit a prompt above and watch the main website update live on the right.
+                  </p>
+                ) : (
+                  <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                    {sitePromptHistory.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="rounded-xl border border-neutral-800 bg-neutral-950/80 p-3 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                              entry.source === 'gemini'
+                                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            }`}
+                          >
+                            {entry.source === 'gemini' ? 'Gemini AI' : 'Smart Engine'}
+                          </span>
+                          <span className="text-[10px] text-neutral-500 flex items-center gap-1">
+                            <Clock className="h-2.5 w-2.5" />
+                            {new Date(entry.createdAt).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        <p className="text-xs font-semibold text-white">&ldquo;{entry.prompt}&rdquo;</p>
+                        <p className="text-[11px] text-emerald-400">{entry.summary}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Embedded Live Main Website Preview */}
+            <div className="xl:col-span-7 rounded-2xl border border-neutral-800 bg-neutral-900/70 overflow-hidden shadow-2xl flex flex-col">
+              {/* Browser Frame Top Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-800 bg-neutral-950 px-4 py-2.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
+                  </div>
+                  <div className="ml-2 flex items-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1 text-[11px] text-neutral-300">
+                    <Globe className="h-3 w-3 text-emerald-400 shrink-0" />
+                    <span className="truncate font-mono">Live Main Website Preview — {siteConfig.siteName}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewDevice('desktop')}
+                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold cursor-pointer ${
+                      previewDevice === 'desktop'
+                        ? 'bg-neutral-800 text-white'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <Monitor className="h-3.5 w-3.5" />
+                    <span>Desktop</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewDevice('mobile')}
+                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold cursor-pointer ${
+                      previewDevice === 'mobile'
+                        ? 'bg-neutral-800 text-white'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <Smartphone className="h-3.5 w-3.5" />
+                    <span>Mobile</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Embedded Main Website Iframe Viewport */}
+              <div className="bg-neutral-950 p-3 flex justify-center overflow-x-auto">
+                <div
+                  className={`transition-all duration-200 rounded-xl overflow-hidden border border-neutral-800 bg-neutral-950 shadow-inner ${
+                    previewDevice === 'mobile' ? 'w-[390px]' : 'w-full'
+                  }`}
+                >
+                  <iframe
+                    key={previewKey}
+                    src="/?preview=1"
+                    title="Live Main Website Preview"
+                    className="w-full h-[680px] border-0 bg-neutral-950"
+                  />
+                </div>
+              </div>
             </div>
           </div>
         </div>

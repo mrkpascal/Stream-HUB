@@ -11,6 +11,8 @@ import {
   SubscriptionTierId,
   UserRole,
   UserStatus,
+  SubscriptionPaymentRequest,
+  SiteConfig,
 } from '../types';
 import {
   ADMIN_CREDENTIALS,
@@ -21,8 +23,11 @@ import {
   INITIAL_USERS,
   INITIAL_USER_CONTROLS,
   INITIAL_MONETIZATION,
+  INITIAL_PAYMENT_REQUESTS,
   INITIAL_ANALYTICS,
+  INITIAL_SITE_CONFIG,
 } from '../data/initialData';
+import { COUNTRY_CURRENCIES } from '../utils/currency';
 
 interface AppContextType {
   currentUser: User | null;
@@ -35,10 +40,13 @@ interface AppContextType {
   userControls: UserDashboardControls;
   usersList: User[];
   analytics: AnalyticsMetric[];
-  
+  siteConfig: SiteConfig;
+
   // Navigation & View State
   currentView: 'stream' | 'admin-dashboard' | 'user-dashboard' | 'pricing';
   setCurrentView: (view: 'stream' | 'admin-dashboard' | 'user-dashboard' | 'pricing') => void;
+  adminActiveTab: 'videos' | 'ad-engine' | 'site-editor' | 'ai-studio-prompt' | 'analytics' | 'users' | 'controls' | 'monetization' | 'payment-review';
+  setAdminActiveTab: (tab: 'videos' | 'ad-engine' | 'site-editor' | 'ai-studio-prompt' | 'analytics' | 'users' | 'controls' | 'monetization' | 'payment-review') => void;
   selectedGroupId: string;
   setSelectedGroupId: (id: string) => void;
   searchQuery: string;
@@ -48,6 +56,7 @@ interface AppContextType {
   activeVideo: Video | null;
   setActiveVideo: (video: Video | null) => void;
   playVideoWithGate: (video: Video) => boolean;
+  downloadVideoWithGate: (video: Video) => boolean;
   activeAd: AdCampaign | null;
   adCountdown: number;
   canSkipAd: boolean;
@@ -69,9 +78,14 @@ interface AppContextType {
   pricingModalOpen: boolean;
   setPricingModalOpen: (open: boolean) => void;
 
+  communityPopupOpen: boolean;
+  setCommunityPopupOpen: (open: boolean) => void;
+
+  isVideo18PlusBlurred: (video: Video) => boolean;
+
   // Authentication Actions
   loginUser: (email: string, pass: string) => { success: boolean; error?: string };
-  signupUser: (data: { name: string; email: string; pass: string; birthDate: string; tier?: SubscriptionTierId }) => { success: boolean; error?: string };
+  signupUser: (data: { name: string; email: string; pass: string; birthDate: string; tier?: SubscriptionTierId; countryCode?: string }) => { success: boolean; error?: string };
   loginAdmin: (email: string, pass: string) => { success: boolean; error?: string };
   logout: () => void;
   upgradeSubscription: (tierId: SubscriptionTierId) => void;
@@ -86,15 +100,49 @@ interface AppContextType {
   // Ad Campaign Management
   generateAdFromPrompt: (prompt: string, targetGroup?: string) => Promise<{ success: boolean; ad?: Partial<AdCampaign>; error?: string }>;
   addAdCampaign: (campaign: Omit<AdCampaign, 'id' | 'impressions' | 'clicks' | 'revenueEarned' | 'createdAt'>) => void;
+  updateAdCampaign: (adId: string, updates: Partial<AdCampaign>) => void;
   toggleAdActive: (adId: string) => void;
   deleteAdCampaign: (adId: string) => void;
 
-  // Admin Controls & Settings
+  // Admin Controls, Channels & Site Content Settings
   updateUserRole: (userId: string, role: UserRole) => void;
   updateUserStatus: (userId: string, status: UserStatus) => void;
+  updateUserSubscription: (userId: string, tierId: SubscriptionTierId) => void;
   updateUserControls: (controls: Partial<UserDashboardControls>) => void;
   updateMonetization: (settings: Partial<MonetizationSettings>) => void;
   updateSubscriptionTier: (tierId: SubscriptionTierId, updates: Partial<SubscriptionTier>) => void;
+  updateSiteConfig: (updates: Partial<SiteConfig>) => void;
+  resetSiteConfig: () => void;
+  applySitePrompt: (
+    prompt: string,
+    attachedImageUrl?: string
+  ) => Promise<{ success: boolean; summary?: string; source?: string; error?: string }>;
+  undoLastSitePrompt: () => void;
+  canUndoSitePrompt: boolean;
+  sitePromptHistory: { id: string; prompt: string; summary: string; source: string; createdAt: string }[];
+  updateVideoGroup: (groupId: string, updates: Partial<VideoGroup>) => void;
+  addVideoGroup: (group: { name: string; description: string; is18Plus: boolean; accentColor: string; badgeText?: string }) => void;
+  deleteVideoGroup: (groupId: string) => void;
+
+  // Subscription Payment Review
+  paymentRequests: SubscriptionPaymentRequest[];
+  submitSubscriptionPaymentRequest: (data: {
+    tierId: SubscriptionTierId;
+    billingCycle: 'monthly' | 'yearly';
+    paymentMethod?: 'momo' | 'usdt_trc20';
+    senderPhone: string;
+    senderName: string;
+    screenshotUrl: string;
+    transactionId?: string;
+    countryName?: string;
+    localCurrency?: string;
+    localAmount?: number;
+    rwfAmount?: number;
+    usdtAmount?: number;
+    note?: string;
+  }) => { success: boolean; error?: string };
+  approvePaymentRequest: (requestId: string) => void;
+  rejectPaymentRequest: (requestId: string) => void;
 
   // Notification Toast
   toastMessage: string | null;
@@ -103,7 +151,62 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+const RESET_USERS_PAYMENTS_FLAG = 'streamhub_clean_users_payments_v1';
+const VIP_18PLUS_MIGRATION_FLAG = 'streamhub_18plus_vip_only_v1';
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // One-time cleanup of previously cached demo non-admin users, payment requests, and subscription revenue
+  if (typeof window !== 'undefined' && !localStorage.getItem(RESET_USERS_PAYMENTS_FLAG)) {
+    try {
+      const savedUserRaw = localStorage.getItem('pascalhub_user');
+      if (savedUserRaw) {
+        const parsedUser: User = JSON.parse(savedUserRaw);
+        if (parsedUser.role !== 'admin') {
+          localStorage.removeItem('pascalhub_user');
+        }
+      }
+      localStorage.setItem('pascalhub_users_list', JSON.stringify(INITIAL_USERS));
+      localStorage.setItem('streamhub_payment_requests', JSON.stringify([]));
+      const savedMonetizationRaw = localStorage.getItem('pascalhub_monetization');
+      if (savedMonetizationRaw) {
+        const parsedMon = JSON.parse(savedMonetizationRaw);
+        localStorage.setItem(
+          'pascalhub_monetization',
+          JSON.stringify({ ...parsedMon, totalSubscriptionRevenue: 0 })
+        );
+      }
+      localStorage.setItem(RESET_USERS_PAYMENTS_FLAG, '1');
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  // One-time migration: ensure Free & Pro tiers have allows18Plus = false so 18+ videos stay blurred for non-VIP subscriptions
+  if (typeof window !== 'undefined' && !localStorage.getItem(VIP_18PLUS_MIGRATION_FLAG)) {
+    try {
+      const savedTiersRaw = localStorage.getItem('pascalhub_tiers');
+      if (savedTiersRaw) {
+        const parsedTiers: SubscriptionTier[] = JSON.parse(savedTiersRaw);
+        const migratedTiers = parsedTiers.map((t) => {
+          if (t.id === 'free' || t.id === 'pro') {
+            const defaultTier = INITIAL_SUBSCRIPTION_TIERS.find((it) => it.id === t.id);
+            return {
+              ...t,
+              allows18Plus: false,
+              description: defaultTier?.description || t.description,
+              features: defaultTier?.features || t.features,
+            };
+          }
+          return t;
+        });
+        localStorage.setItem('pascalhub_tiers', JSON.stringify(migratedTiers));
+      }
+      localStorage.setItem(VIP_18PLUS_MIGRATION_FLAG, '1');
+    } catch {
+      // ignore storage errors
+    }
+  }
+
   // Load saved state or use initial defaults
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('pascalhub_user');
@@ -114,16 +217,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const saved = localStorage.getItem('pascalhub_videos');
     if (!saved) return INITIAL_VIDEOS;
     const parsed: Video[] = JSON.parse(saved);
-    return parsed.map((vid) => {
+    const repaired = parsed.map((vid) => {
       if (vid.videoUrl?.includes('commondatastorage.googleapis.com/gtv-videos-bucket/sample/')) {
         const replacement = INITIAL_VIDEOS.find((v) => v.id === vid.id)?.videoUrl || '/videos/demo-stream.mp4';
         return { ...vid, videoUrl: replacement };
       }
       return vid;
     });
+    const existingIds = new Set(repaired.map((v) => v.id));
+    const newChannelVideos = INITIAL_VIDEOS.filter(
+      (v) => (v.groupId === 'group-8' || v.groupId === 'group-9') && !existingIds.has(v.id)
+    );
+    return newChannelVideos.length > 0 ? [...repaired, ...newChannelVideos] : repaired;
   });
 
-  const [videoGroups, setVideoGroups] = useState<VideoGroup[]>(INITIAL_GROUPS);
+  const [videoGroups, setVideoGroups] = useState<VideoGroup[]>(() => {
+    try {
+      const saved = localStorage.getItem('streamhub_video_groups');
+      return saved ? JSON.parse(saved) : INITIAL_GROUPS;
+    } catch {
+      return INITIAL_GROUPS;
+    }
+  });
+
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(() => {
+    try {
+      const saved = localStorage.getItem('streamhub_site_config');
+      return saved ? { ...INITIAL_SITE_CONFIG, ...JSON.parse(saved) } : INITIAL_SITE_CONFIG;
+    } catch {
+      return INITIAL_SITE_CONFIG;
+    }
+  });
 
   const [adCampaigns, setAdCampaigns] = useState<AdCampaign[]>(() => {
     const saved = localStorage.getItem('pascalhub_ads');
@@ -132,7 +256,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [subscriptionTiers, setSubscriptionTiers] = useState<SubscriptionTier[]>(() => {
     const saved = localStorage.getItem('pascalhub_tiers');
-    return saved ? JSON.parse(saved) : INITIAL_SUBSCRIPTION_TIERS;
+    if (!saved) return INITIAL_SUBSCRIPTION_TIERS;
+    const parsed: SubscriptionTier[] = JSON.parse(saved);
+    return parsed.map((tier) => {
+      const initialTier = INITIAL_SUBSCRIPTION_TIERS.find((t) => t.id === tier.id);
+      const hasDownloadFeature = tier.features?.some((f) => f.toLowerCase().includes('download'));
+      return {
+        ...tier,
+        allowsDownloads: tier.allowsDownloads ?? true,
+        features: hasDownloadFeature
+          ? tier.features
+          : [
+              ...(tier.features || []),
+              initialTier?.features.find((f) => f.toLowerCase().includes('download')) ||
+                'Direct video downloads enabled',
+            ],
+      };
+    });
   });
 
   const [userControls, setUserControls] = useState<UserDashboardControls>(() => {
@@ -150,10 +290,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_USERS;
   });
 
+  const [paymentRequests, setPaymentRequests] = useState<SubscriptionPaymentRequest[]>(() => {
+    const saved = localStorage.getItem('streamhub_payment_requests');
+    if (!saved) return INITIAL_PAYMENT_REQUESTS;
+    const parsed: SubscriptionPaymentRequest[] = JSON.parse(saved);
+    return parsed.map((req) => ({
+      ...req,
+      senderName: req.senderName || req.userName,
+    }));
+  });
+
   const [analytics, setAnalytics] = useState<AnalyticsMetric[]>(INITIAL_ANALYTICS);
 
   // View state
   const [currentView, setCurrentView] = useState<'stream' | 'admin-dashboard' | 'user-dashboard' | 'pricing'>('stream');
+  const [adminActiveTab, setAdminActiveTab] = useState<
+    'videos' | 'ad-engine' | 'site-editor' | 'ai-studio-prompt' | 'analytics' | 'users' | 'controls' | 'monetization' | 'payment-review'
+  >('ad-engine');
+  const [lastSiteSnapshot, setLastSiteSnapshot] = useState<{
+    siteConfig: SiteConfig;
+    subscriptionTiers: SubscriptionTier[];
+    videoGroups: VideoGroup[];
+  } | null>(null);
+  const [sitePromptHistory, setSitePromptHistory] = useState<
+    { id: string; prompt: string; summary: string; source: string; createdAt: string }[]
+  >(() => {
+    try {
+      const saved = localStorage.getItem('streamhub_prompt_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [selectedGroupId, setSelectedGroupId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -169,6 +337,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [ageGateModalOpen, setAgeGateModalOpen] = useState<boolean>(false);
   const [pending18PlusVideo, setPending18PlusVideo] = useState<Video | null>(null);
   const [pricingModalOpen, setPricingModalOpen] = useState<boolean>(false);
+  const [communityPopupOpen, setCommunityPopupOpen] = useState<boolean>(false);
+
+  // Auto-open community links popup once per browser session (skip inside Admin preview iframe)
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.location.search.includes('preview=1')) {
+        return;
+      }
+      if (!sessionStorage.getItem('streamhub_community_popup_seen')) {
+        const timer = setTimeout(() => {
+          setCommunityPopupOpen(true);
+          sessionStorage.setItem('streamhub_community_popup_seen', '1');
+        }, 900);
+        return () => clearTimeout(timer);
+      }
+    } catch {
+      // ignore sessionStorage errors
+    }
+  }, []);
 
   // Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -213,6 +400,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('pascalhub_users_list', JSON.stringify(usersList));
   }, [usersList]);
 
+  useEffect(() => {
+    localStorage.setItem('streamhub_payment_requests', JSON.stringify(paymentRequests));
+  }, [paymentRequests]);
+
+  useEffect(() => {
+    localStorage.setItem('streamhub_video_groups', JSON.stringify(videoGroups));
+  }, [videoGroups]);
+
+  useEffect(() => {
+    localStorage.setItem('streamhub_site_config', JSON.stringify(siteConfig));
+    if (typeof document !== 'undefined') {
+      document.title = `${siteConfig.siteName || 'Stream HUB'} — ${siteConfig.siteSlogan || 'Videos For Everytime'}`;
+    }
+  }, [siteConfig]);
+
   // Keyboard shortcut for discreet hidden admin login: Ctrl+Shift+A or Cmd+Shift+A
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -226,6 +428,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const isAdmin = currentUser?.role === 'admin' || currentUser?.email === ADMIN_CREDENTIALS.email;
+
+  const isVideo18PlusBlurred = (video: Video): boolean => {
+    const isMature = Boolean(video.is18Plus || video.groupId === 'group-7');
+    if (!isMature) return false;
+    if (!currentUser) return true;
+    if (isAdmin) return false;
+    const userTier = subscriptionTiers.find((t) => t.id === currentUser.subscriptionTier);
+    if (!userTier?.allows18Plus) return true;
+    if (currentUser.age < 18 || !currentUser.isVerified18Plus) return true;
+    return false;
+  };
 
   const openAuthModal = (tab: 'signin' | 'signup' | 'admin' = 'signin') => {
     setAuthModalTab(tab);
@@ -287,14 +500,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
-    // 3. 18+ Age Check
+    // 3. 18+ Subscription & Age Check (Blurred for logged-out & non-VIP subscriptions)
     if (video.is18Plus || video.groupId === 'group-7') {
-      // Check user age
-      if (currentUser.age < 18) {
+      const userTier = subscriptionTiers.find((t) => t.id === currentUser.subscriptionTier);
+      if (!isAdmin && !userTier?.allows18Plus) {
+        showToast('18+ Mature videos are blurred for your current plan. Upgrade to VIP All-Access to unlock.');
+        setPricingModalOpen(true);
+        return false;
+      }
+      if (!isAdmin && currentUser.age < 18) {
         showToast('This video is restricted to viewers 18 years and older.');
         return false;
       }
-      if (!currentUser.isVerified18Plus) {
+      if (!isAdmin && !currentUser.isVerified18Plus) {
         setPending18PlusVideo(video);
         setAgeGateModalOpen(true);
         return false;
@@ -370,6 +588,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
+  // Download Gatekeeper: Enabled across all subscription tiers (Free, Pro, VIP) + Admin
+  const downloadVideoWithGate = (video: Video): boolean => {
+    if (!currentUser) {
+      setPending18PlusVideo(video);
+      setAuthModalTab('signup');
+      setAuthModalOpen(true);
+      showToast('Please create a free account or sign in to download videos.');
+      return false;
+    }
+
+    if (currentUser.status === 'banned') {
+      showToast('Your account has been suspended by platform administration.');
+      return false;
+    }
+
+    if (video.is18Plus || video.groupId === 'group-7') {
+      const userTierCheck = subscriptionTiers.find((t) => t.id === currentUser.subscriptionTier);
+      if (!isAdmin && !userTierCheck?.allows18Plus) {
+        showToast('18+ Mature videos require a VIP All-Access subscription to unlock or download.');
+        setPricingModalOpen(true);
+        return false;
+      }
+      if (!isAdmin && currentUser.age < 18) {
+        showToast('This video is restricted to viewers 18 years and older.');
+        return false;
+      }
+      if (!isAdmin && !currentUser.isVerified18Plus) {
+        setPending18PlusVideo(video);
+        setAgeGateModalOpen(true);
+        return false;
+      }
+    }
+
+    if (video.requiredTier === 'vip' && currentUser.subscriptionTier !== 'vip' && !isAdmin) {
+      showToast('This exclusive premiere requires a VIP All-Access subscription.');
+      setPricingModalOpen(true);
+      return false;
+    }
+    if (video.requiredTier === 'pro' && currentUser.subscriptionTier === 'free' && !isAdmin) {
+      showToast('This title is restricted to Pro and VIP subscribers.');
+      setPricingModalOpen(true);
+      return false;
+    }
+
+    const userTier = subscriptionTiers.find((t) => t.id === currentUser.subscriptionTier);
+    if (userTier && userTier.allowsDownloads === false && !isAdmin) {
+      showToast('Downloads are currently disabled for this subscription tier.');
+      setPricingModalOpen(true);
+      return false;
+    }
+
+    const rawUrl = (video.videoUrl || '/videos/demo-stream.mp4').trim();
+    if (/youtube\.com|youtu\.be|vimeo\.com/i.test(rawUrl)) {
+      showToast('External YouTube/Vimeo streams cannot be downloaded as MP4 files.');
+      return false;
+    }
+
+    const downloadHref = `/api/download-video?url=${encodeURIComponent(rawUrl)}&title=${encodeURIComponent(video.title)}`;
+    const link = document.createElement('a');
+    link.href = downloadHref;
+    link.download = `${video.title.replace(/[^a-zA-Z0-9_-]+/g, '_')}.mp4`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    showToast(`Downloading "${video.title}" (${userTier?.maxQuality || 'HD'})...`);
+    return true;
+  };
+
   const confirm18PlusConsent = (confirmed: boolean) => {
     setAgeGateModalOpen(false);
     if (confirmed && currentUser) {
@@ -415,6 +702,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     pass: string;
     birthDate: string;
     tier?: SubscriptionTierId;
+    countryCode?: string;
   }) => {
     if (usersList.some((u) => u.email.toLowerCase() === data.email.toLowerCase())) {
       return { success: false, error: 'An account with this email address already exists.' };
@@ -428,6 +716,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       computedAge = Math.max(12, currentYear - birthYear);
     }
 
+    const countryOption = data.countryCode
+      ? COUNTRY_CURRENCIES.find((c) => c.countryCode === data.countryCode)
+      : undefined;
+
+    const requestedPaidTier = data.tier && data.tier !== 'free' ? data.tier : null;
+
     const newUser: User = {
       id: `usr-${Date.now()}`,
       name: data.name.trim(),
@@ -438,20 +732,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       age: computedAge,
       birthDate: data.birthDate,
       createdAt: new Date().toISOString().split('T')[0],
-      subscriptionTier: data.tier || 'free',
+      subscriptionTier: 'free',
       watchHistory: [],
       savedWatchlist: [],
       isVerified18Plus: computedAge >= 18,
+      countryCode: countryOption?.countryCode || data.countryCode || 'RW',
+      countryName: countryOption?.countryName || 'Rwanda',
+      preferredCurrency: countryOption?.currency || 'RWF',
     };
 
     setUsersList((prev) => [newUser, ...prev]);
     setCurrentUser(newUser);
     setAuthModalOpen(false);
-    showToast(`Account successfully created! Welcome to PascalHub, ${newUser.name}.`);
 
-    if (pending18PlusVideo) {
-      playVideoWithGate(pending18PlusVideo);
-      setPending18PlusVideo(null);
+    if (requestedPaidTier) {
+      showToast(
+        `Account created! Complete payment in ${newUser.preferredCurrency} to activate ${requestedPaidTier.toUpperCase()}.`
+      );
+      setPricingModalOpen(true);
+    } else {
+      showToast(`Account successfully created! Welcome to Stream HUB, ${newUser.name}.`);
+      if (pending18PlusVideo) {
+        playVideoWithGate(pending18PlusVideo);
+        setPending18PlusVideo(null);
+      }
     }
     return { success: true };
   };
@@ -513,6 +817,130 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     setPricingModalOpen(false);
     showToast(`Upgraded to ${tier?.name || tierId.toUpperCase()}! Enjoy ad-free premium streaming.`);
+  };
+
+  const submitSubscriptionPaymentRequest = (data: {
+    tierId: SubscriptionTierId;
+    billingCycle: 'monthly' | 'yearly';
+    paymentMethod?: 'momo' | 'usdt_trc20';
+    senderPhone: string;
+    senderName: string;
+    screenshotUrl: string;
+    transactionId?: string;
+    countryName?: string;
+    localCurrency?: string;
+    localAmount?: number;
+    rwfAmount?: number;
+    usdtAmount?: number;
+    note?: string;
+  }): { success: boolean; error?: string } => {
+    if (!currentUser) {
+      openAuthModal('signup');
+      return { success: false, error: 'Please sign in first.' };
+    }
+    const paymentMethod = data.paymentMethod || 'momo';
+    const senderPhone = data.senderPhone.trim();
+    const senderName = data.senderName.trim();
+    const screenshotUrl = data.screenshotUrl.trim();
+
+    if (!senderPhone || !senderName || !screenshotUrl) {
+      return {
+        success: false,
+        error:
+          paymentMethod === 'usdt_trc20'
+            ? 'Please enter your sender wallet address/contact, full names, and upload a transfer screenshot.'
+            : 'Please enter the sender phone number, sender full names, and upload a payment screenshot.',
+      };
+    }
+
+    const tier = subscriptionTiers.find((t) => t.id === data.tierId);
+    const amount = tier
+      ? data.billingCycle === 'monthly'
+        ? tier.priceMonthly
+        : tier.priceYearly
+      : 0;
+
+    const recipient =
+      paymentMethod === 'usdt_trc20'
+        ? monetization.usdtTrc20Address || 'TAVQFaWipQzMamBjhAKiU83d67gTYKc1wK'
+        : monetization.subscriptionPaymentPhone || '+250781301598';
+
+    const newRequest: SubscriptionPaymentRequest = {
+      id: `pay-${Date.now()}`,
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userEmail: currentUser.email,
+      requestedTier: data.tierId,
+      billingCycle: data.billingCycle,
+      paymentMethod,
+      amount,
+      usdtAmount: data.usdtAmount ?? amount,
+      recipientNumber: recipient,
+      senderPhone,
+      senderName,
+      screenshotUrl,
+      transactionId: data.transactionId?.trim() || undefined,
+      countryName: data.countryName,
+      localCurrency: data.localCurrency,
+      localAmount: data.localAmount,
+      rwfAmount: data.rwfAmount,
+      note: data.note?.trim() || undefined,
+      status: 'pending',
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+
+    setPaymentRequests((prev) => [newRequest, ...prev]);
+    setPricingModalOpen(false);
+    showToast(
+      paymentMethod === 'usdt_trc20'
+        ? `USDT (TRC-20) payment proof submitted! Awaiting admin approval under Payment Review.`
+        : `Payment proof submitted to ${newRequest.recipientNumber}! Awaiting admin approval under Payment Review.`
+    );
+    return { success: true };
+  };
+
+  const approvePaymentRequest = (requestId: string) => {
+    const req = paymentRequests.find((r) => r.id === requestId);
+    if (!req || req.status === 'approved') return;
+
+    const today = new Date().toISOString().split('T')[0];
+    setPaymentRequests((prev) =>
+      prev.map((r) => (r.id === requestId ? { ...r, status: 'approved', reviewedAt: today } : r))
+    );
+
+    setUsersList((prev) =>
+      prev.map((u) =>
+        u.id === req.userId ? { ...u, subscriptionTier: req.requestedTier } : u
+      )
+    );
+
+    if (currentUser?.id === req.userId) {
+      setCurrentUser((prev) =>
+        prev ? { ...prev, subscriptionTier: req.requestedTier } : null
+      );
+    }
+
+    if (req.amount > 0) {
+      setMonetization((prev) => ({
+        ...prev,
+        totalSubscriptionRevenue: prev.totalSubscriptionRevenue + req.amount,
+      }));
+    }
+
+    showToast(
+      `Payment approved! ${req.userName} is now on ${req.requestedTier.toUpperCase()} tier.`
+    );
+  };
+
+  const rejectPaymentRequest = (requestId: string) => {
+    const req = paymentRequests.find((r) => r.id === requestId);
+    if (!req || req.status === 'rejected') return;
+
+    const today = new Date().toISOString().split('T')[0];
+    setPaymentRequests((prev) =>
+      prev.map((r) => (r.id === requestId ? { ...r, status: 'rejected', reviewedAt: today } : r))
+    );
+    showToast(`Payment request from ${req.userName} has been rejected.`);
   };
 
   // Video Actions
@@ -619,7 +1047,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         headline: prompt.slice(0, 48),
         tagline: `Promoted ad campaign generated from prompt: "${prompt}".`,
         ctaText: cta,
-        ctaUrl: 'https://pascalhub.stream/promo',
+        ctaUrl: 'https://streamhub.video/promo',
         format: lower.includes('banner') ? 'sponsor_banner' : lower.includes('midroll') ? 'midroll_overlay' : 'preroll',
         themeColor: theme,
         durationSeconds: 8,
@@ -645,6 +1073,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setAdCampaigns((prev) => [newAd, ...prev]);
     showToast(`Ad campaign "${newAd.title}" launched across targeted video streams!`);
+  };
+
+  const updateAdCampaign = (adId: string, updates: Partial<AdCampaign>) => {
+    setAdCampaigns((prev) =>
+      prev.map((ad) => (ad.id === adId ? { ...ad, ...updates } : ad))
+    );
+    showToast('Ad campaign details updated.');
   };
 
   const toggleAdActive = (adId: string) => {
@@ -676,6 +1111,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`User status set to ${status}`);
   };
 
+  const updateUserSubscription = (userId: string, tierId: SubscriptionTierId) => {
+    setUsersList((prev) =>
+      prev.map((u) => (u.id === userId ? { ...u, subscriptionTier: tierId } : u))
+    );
+    if (currentUser?.id === userId) {
+      setCurrentUser((prev) => (prev ? { ...prev, subscriptionTier: tierId } : null));
+    }
+    showToast(`User subscription updated to ${tierId.toUpperCase()}`);
+  };
+
   const updateUserControls = (controls: Partial<UserDashboardControls>) => {
     setUserControls((prev) => ({ ...prev, ...controls }));
     showToast('User dashboard feature permissions saved.');
@@ -693,6 +1138,202 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Subscription tier parameters updated.');
   };
 
+  const updateSiteConfig = (updates: Partial<SiteConfig>) => {
+    setSiteConfig((prev) => ({ ...prev, ...updates }));
+  };
+
+  const resetSiteConfig = () => {
+    setSiteConfig(INITIAL_SITE_CONFIG);
+    setVideoGroups(INITIAL_GROUPS);
+    localStorage.setItem('streamhub_site_config', JSON.stringify(INITIAL_SITE_CONFIG));
+    localStorage.setItem('streamhub_video_groups', JSON.stringify(INITIAL_GROUPS));
+    showToast('Website texts, images, and channels restored to defaults.');
+  };
+
+  const applySitePrompt = async (
+    prompt: string,
+    attachedImageUrl?: string
+  ): Promise<{ success: boolean; summary?: string; source?: string; error?: string }> => {
+    const cleanPrompt = prompt.trim();
+    if (!cleanPrompt && !attachedImageUrl) {
+      return { success: false, error: 'Please enter a prompt or attach an image.' };
+    }
+
+    try {
+      const response = await fetch('/api/apply-site-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: cleanPrompt || 'Update hero cover image with attached upload',
+          currentSiteConfig: siteConfig,
+          currentTiers: subscriptionTiers,
+          currentGroups: videoGroups,
+          attachedImageUrl,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.result) {
+        return { success: false, error: data.error || 'Failed to apply website prompt.' };
+      }
+
+      const { summary, siteConfigPatch, tierUpdates, newChannels, renameChannels } = data.result;
+
+      // Save snapshot for single-click undo
+      setLastSiteSnapshot({
+        siteConfig,
+        subscriptionTiers,
+        videoGroups,
+      });
+
+      // Compute next state synchronously so localStorage updates before iframe reload
+      let nextSiteConfig = siteConfig;
+      if (siteConfigPatch && typeof siteConfigPatch === 'object') {
+        nextSiteConfig = { ...siteConfig, ...siteConfigPatch };
+      }
+      if (attachedImageUrl && !siteConfigPatch?.siteLogoUrl && !siteConfigPatch?.heroBannerImageUrl) {
+        nextSiteConfig = { ...nextSiteConfig, heroBannerImageUrl: attachedImageUrl };
+      }
+
+      let nextTiers = subscriptionTiers;
+      if (Array.isArray(tierUpdates) && tierUpdates.length > 0) {
+        nextTiers = subscriptionTiers.map((tier) => {
+          const patch = tierUpdates.find((u: any) => u?.id === tier.id);
+          return patch ? { ...tier, ...patch } : tier;
+        });
+      }
+
+      let nextGroups = [...videoGroups];
+      if (Array.isArray(renameChannels) && renameChannels.length > 0) {
+        nextGroups = nextGroups.map((g) => {
+          const patch = renameChannels.find((u: any) => u?.id === g.id);
+          return patch ? { ...g, ...patch } : g;
+        });
+      }
+      if (Array.isArray(newChannels) && newChannels.length > 0) {
+        newChannels.forEach((ch: any, idx: number) => {
+          if (!ch?.name?.trim()) return;
+          const alreadyExists = nextGroups.some(
+            (g) => g.name.toLowerCase() === ch.name.trim().toLowerCase()
+          );
+          if (alreadyExists) return;
+          const newId = `group-${Date.now()}-${idx}`;
+          const slug = ch.name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/(^-|-$)/g, '');
+          nextGroups.push({
+            id: newId,
+            index: nextGroups.length + 1,
+            name: ch.name.trim(),
+            slug: slug || newId,
+            description: ch.description?.trim() || `Curated ${ch.name.trim()} streams.`,
+            is18Plus: Boolean(ch.is18Plus),
+            accentColor: ch.accentColor || '#f43f5e',
+            badgeText: ch.is18Plus ? '18+ RESTRICTED' : undefined,
+            videoCount: 0,
+          });
+        });
+      }
+
+      // Persist synchronously to localStorage before updating React state & refreshing preview iframe
+      localStorage.setItem('streamhub_site_config', JSON.stringify(nextSiteConfig));
+      localStorage.setItem('pascalhub_tiers', JSON.stringify(nextTiers));
+      localStorage.setItem('streamhub_video_groups', JSON.stringify(nextGroups));
+
+      setSiteConfig(nextSiteConfig);
+      setSubscriptionTiers(nextTiers);
+      setVideoGroups(nextGroups);
+
+      const historyEntry = {
+        id: `prompt-${Date.now()}`,
+        prompt: cleanPrompt || 'Updated image via upload',
+        summary: summary || 'Applied prompt updates to live website.',
+        source: data.source || 'gemini',
+        createdAt: new Date().toISOString(),
+      };
+      setSitePromptHistory((prev) => {
+        const updated = [historyEntry, ...prev].slice(0, 20);
+        try {
+          localStorage.setItem('streamhub_prompt_history', JSON.stringify(updated));
+        } catch {
+          // ignore storage quota
+        }
+        return updated;
+      });
+
+      showToast(historyEntry.summary);
+      return { success: true, summary: historyEntry.summary, source: data.source };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error applying prompt.' };
+    }
+  };
+
+  const undoLastSitePrompt = () => {
+    if (!lastSiteSnapshot) return;
+    localStorage.setItem('streamhub_site_config', JSON.stringify(lastSiteSnapshot.siteConfig));
+    localStorage.setItem('pascalhub_tiers', JSON.stringify(lastSiteSnapshot.subscriptionTiers));
+    localStorage.setItem('streamhub_video_groups', JSON.stringify(lastSiteSnapshot.videoGroups));
+    setSiteConfig(lastSiteSnapshot.siteConfig);
+    setSubscriptionTiers(lastSiteSnapshot.subscriptionTiers);
+    setVideoGroups(lastSiteSnapshot.videoGroups);
+    setLastSiteSnapshot(null);
+    showToast('Reverted last AI Studio prompt change.');
+  };
+
+  const updateVideoGroup = (groupId: string, updates: Partial<VideoGroup>) => {
+    setVideoGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, ...updates } : g))
+    );
+    if (typeof updates.is18Plus === 'boolean') {
+      setVideos((prev) =>
+        prev.map((v) => (v.groupId === groupId ? { ...v, is18Plus: updates.is18Plus! } : v))
+      );
+    }
+    showToast('Channel updated.');
+  };
+
+  const addVideoGroup = (group: {
+    name: string;
+    description: string;
+    is18Plus: boolean;
+    accentColor: string;
+    badgeText?: string;
+  }) => {
+    const newId = `group-${Date.now()}`;
+    const slug = group.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    const newGroup: VideoGroup = {
+      id: newId,
+      index: videoGroups.length + 1,
+      name: group.name.trim(),
+      slug: slug || newId,
+      description: group.description.trim() || 'Custom curated channel.',
+      is18Plus: group.is18Plus,
+      accentColor: group.accentColor || '#f43f5e',
+      badgeText: group.badgeText?.trim() || (group.is18Plus ? '18+ RESTRICTED' : undefined),
+      videoCount: 0,
+    };
+    setVideoGroups((prev) => [...prev, newGroup]);
+    showToast(`Channel "${newGroup.name}" added!`);
+  };
+
+  const deleteVideoGroup = (groupId: string) => {
+    if (videoGroups.length <= 1) {
+      showToast('At least one channel must remain on the platform.');
+      return;
+    }
+    setVideoGroups((prev) =>
+      prev
+        .filter((g) => g.id !== groupId)
+        .map((g, idx) => ({ ...g, index: idx + 1 }))
+    );
+    if (selectedGroupId === groupId) setSelectedGroupId('all');
+    showToast('Channel removed.');
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -706,8 +1347,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         userControls,
         usersList,
         analytics,
+        siteConfig,
         currentView,
         setCurrentView,
+        adminActiveTab,
+        setAdminActiveTab,
         selectedGroupId,
         setSelectedGroupId,
         searchQuery,
@@ -715,6 +1359,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activeVideo,
         setActiveVideo,
         playVideoWithGate,
+        downloadVideoWithGate,
         activeAd,
         adCountdown,
         canSkipAd,
@@ -731,6 +1376,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         confirm18PlusConsent,
         pricingModalOpen,
         setPricingModalOpen,
+        communityPopupOpen,
+        setCommunityPopupOpen,
+        isVideo18PlusBlurred,
         loginUser,
         signupUser,
         loginAdmin,
@@ -743,13 +1391,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleLikeVideo,
         generateAdFromPrompt,
         addAdCampaign,
+        updateAdCampaign,
         toggleAdActive,
         deleteAdCampaign,
         updateUserRole,
         updateUserStatus,
+        updateUserSubscription,
         updateUserControls,
         updateMonetization,
         updateSubscriptionTier,
+        updateSiteConfig,
+        resetSiteConfig,
+        applySitePrompt,
+        undoLastSitePrompt,
+        canUndoSitePrompt: Boolean(lastSiteSnapshot),
+        sitePromptHistory,
+        updateVideoGroup,
+        addVideoGroup,
+        deleteVideoGroup,
+        paymentRequests,
+        submitSubscriptionPaymentRequest,
+        approvePaymentRequest,
+        rejectPaymentRequest,
         toastMessage,
         showToast,
       }}

@@ -1,8 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ADMIN_CREDENTIALS } from '../../data/initialData';
-import { X, Lock, Mail, User as UserIcon, Calendar, Sparkles, Shield, AlertCircle } from 'lucide-react';
+import {
+  X,
+  Lock,
+  Mail,
+  User as UserIcon,
+  Calendar,
+  Shield,
+  AlertCircle,
+  Globe,
+  Crown,
+  ArrowRightLeft,
+} from 'lucide-react';
 import { SubscriptionTierId } from '../../types';
+import {
+  COUNTRY_CURRENCIES,
+  FALLBACK_EXCHANGE_RATES,
+  convertFromUsd,
+  detectDefaultCountryCode,
+  formatCurrencyAmount,
+} from '../../utils/currency';
 
 export const AuthModal: React.FC = () => {
   const {
@@ -13,17 +31,25 @@ export const AuthModal: React.FC = () => {
     loginUser,
     signupUser,
     loginAdmin,
+    subscriptionTiers,
+    monetization,
   } = useApp();
 
   // Form states
   const [signInEmail, setSignInEmail] = useState('');
   const [signInPassword, setSignInPassword] = useState('');
-  
+
   const [signUpName, setSignUpName] = useState('');
   const [signUpEmail, setSignUpEmail] = useState('');
   const [signUpPassword, setSignUpPassword] = useState('');
   const [signUpBirthDate, setSignUpBirthDate] = useState('2001-05-15');
+  const [signUpCountryCode, setSignUpCountryCode] = useState<string>(() =>
+    detectDefaultCountryCode()
+  );
   const [signUpTier, setSignUpTier] = useState<SubscriptionTierId>('free');
+  const [signUpBillingCycle, setSignUpBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
+  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>(FALLBACK_EXCHANGE_RATES);
+  const [rateSource, setRateSource] = useState<'live' | 'fallback'>('fallback');
 
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
@@ -31,7 +57,42 @@ export const AuthModal: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (!authModalOpen || authModalTab !== 'signup') return;
+    fetch('/api/exchange-rates')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.rates) {
+          setExchangeRates(data.rates);
+          setRateSource(data.source === 'live' ? 'live' : 'fallback');
+        }
+      })
+      .catch(() => {});
+  }, [authModalOpen, authModalTab]);
+
   if (!authModalOpen) return null;
+
+  const selectedCountry =
+    COUNTRY_CURRENCIES.find((c) => c.countryCode === signUpCountryCode) || COUNTRY_CURRENCIES[0];
+
+  const selectedTierObj =
+    subscriptionTiers.find((t) => t.id === signUpTier) || subscriptionTiers[0];
+
+  const selectedUsdPrice = selectedTierObj
+    ? signUpBillingCycle === 'monthly'
+      ? selectedTierObj.priceMonthly
+      : selectedTierObj.priceYearly
+    : 0;
+
+  const calculatedLocalAmount = convertFromUsd(
+    selectedUsdPrice,
+    selectedCountry.currency,
+    exchangeRates
+  );
+  const calculatedRwfAmount = convertFromUsd(selectedUsdPrice, 'RWF', exchangeRates);
+  const paymentDestination = monetization.subscriptionPaymentPhone || '+250781301598';
+  const usdtTrc20Address =
+    monetization.usdtTrc20Address || 'TAVQFaWipQzMamBjhAKiU83d67gTYKc1wK';
 
   const handleClose = () => {
     setErrorMessage(null);
@@ -63,6 +124,7 @@ export const AuthModal: React.FC = () => {
       pass: signUpPassword,
       birthDate: signUpBirthDate,
       tier: signUpTier,
+      countryCode: signUpCountryCode,
     });
     setIsSubmitting(false);
     if (!result.success) {
@@ -88,10 +150,9 @@ export const AuthModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 shadow-2xl">
-        
+      <div className="relative w-full max-w-md max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 shadow-2xl">
         {/* Header with Close */}
-        <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-neutral-800 px-6 py-4">
           <div className="flex items-center gap-2">
             {authModalTab === 'admin' ? (
               <div className="flex items-center gap-2 text-rose-500 font-semibold text-sm">
@@ -100,7 +161,7 @@ export const AuthModal: React.FC = () => {
               </div>
             ) : (
               <span className="font-heading text-base font-bold text-white">
-                {authModalTab === 'signup' ? 'Create Streaming Account' : 'Sign In to PascalHub'}
+                {authModalTab === 'signup' ? 'Create Streaming Account' : 'Sign In to Stream HUB'}
               </span>
             )}
           </div>
@@ -112,9 +173,8 @@ export const AuthModal: React.FC = () => {
           </button>
         </div>
 
-        {/* Tab switchers - For regular users: Sign In / Create Account.
-            Admin tab is rendered if opened directly via shortcut / footer link */}
-        <div className="flex border-b border-neutral-800 bg-neutral-950/60 p-1">
+        {/* Tab switchers */}
+        <div className="flex shrink-0 border-b border-neutral-800 bg-neutral-950/60 p-1">
           <button
             onClick={() => {
               setErrorMessage(null);
@@ -142,7 +202,6 @@ export const AuthModal: React.FC = () => {
             Create Account
           </button>
 
-          {/* Admin tab only visible if explicitly on admin mode */}
           {authModalTab === 'admin' && (
             <button
               onClick={() => setAuthModalTab('admin')}
@@ -155,14 +214,14 @@ export const AuthModal: React.FC = () => {
 
         {/* Error Notification */}
         {errorMessage && (
-          <div className="mx-6 mt-4 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
+          <div className="mx-6 mt-4 flex shrink-0 items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
             <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
             <span>{errorMessage}</span>
           </div>
         )}
 
-        {/* Form Body */}
-        <div className="p-6">
+        {/* Scrollable Form Body */}
+        <div className="overflow-y-auto p-6">
           {/* TAB 1: USER SIGN IN */}
           {authModalTab === 'signin' && (
             <form onSubmit={handleSignIn} className="space-y-4">
@@ -223,11 +282,11 @@ export const AuthModal: React.FC = () => {
             </form>
           )}
 
-          {/* TAB 2: USER SIGN UP */}
+          {/* TAB 2: USER SIGN UP WITH COUNTRY & CURRENCY CALCULATOR */}
           {authModalTab === 'signup' && (
             <form onSubmit={handleSignUp} className="space-y-3.5">
               <p className="text-xs text-neutral-400">
-                Create a quick account to stream videos across all 7 categories and save favorites.
+                Create your account to stream across all 9 channels, select your country, and preview subscription costs in your local currency.
               </p>
 
               <div>
@@ -264,49 +323,189 @@ export const AuthModal: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1">
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
-                  <input
-                    type="password"
-                    required
-                    placeholder="Minimum 6 characters"
-                    value={signUpPassword}
-                    onChange={(e) => setSignUpPassword(e.target.value)}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-950 py-2 pl-9 pr-3 text-xs text-neutral-100 placeholder-neutral-600 focus:border-rose-500 focus:outline-none"
-                  />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-neutral-300 mb-1">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+                    <input
+                      type="password"
+                      required
+                      placeholder="Min 6 chars"
+                      value={signUpPassword}
+                      onChange={(e) => setSignUpPassword(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-800 bg-neutral-950 py-2 pl-9 pr-3 text-xs text-neutral-100 placeholder-neutral-600 focus:border-rose-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-neutral-300 mb-1">
+                    Date of Birth
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+                    <input
+                      type="date"
+                      required
+                      value={signUpBirthDate}
+                      onChange={(e) => setSignUpBirthDate(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-800 bg-neutral-950 py-2 pl-9 pr-2 text-xs text-neutral-100 placeholder-neutral-600 focus:border-rose-500 focus:outline-none"
+                    />
+                  </div>
                 </div>
               </div>
 
+              {/* Country Selection */}
               <div>
                 <label className="block text-xs font-medium text-neutral-300 mb-1">
-                  Date of Birth (For 18+ Mature Age Verification)
+                  Country & Currency
                 </label>
                 <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
-                  <input
-                    type="date"
-                    required
-                    value={signUpBirthDate}
-                    onChange={(e) => setSignUpBirthDate(e.target.value)}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-950 py-2 pl-9 pr-3 text-xs text-neutral-100 placeholder-neutral-600 focus:border-rose-500 focus:outline-none"
-                  />
+                  <Globe className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-400" />
+                  <select
+                    value={signUpCountryCode}
+                    onChange={(e) => setSignUpCountryCode(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-800 bg-neutral-950 py-2 pl-9 pr-3 text-xs text-neutral-100 focus:border-emerald-500 focus:outline-none"
+                  >
+                    {COUNTRY_CURRENCIES.map((c) => (
+                      <option key={c.countryCode} value={c.countryCode}>
+                        {c.countryName} ({c.currency})
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <p className="mt-1 text-[10px] text-neutral-500">
-                  Required to legally unlock Channel 7: 18+ Mature content.
-                </p>
               </div>
 
-              <div className="pt-2">
+              {/* Subscription Plan Selection & Real-Time Currency Calculator */}
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/90 p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-neutral-200">
+                    <Crown className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Select Plan ({selectedCountry.currency})</span>
+                  </span>
+                  <div className="flex items-center rounded-md border border-neutral-800 bg-neutral-900 p-0.5 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setSignUpBillingCycle('monthly')}
+                      className={`px-2 py-0.5 rounded font-semibold transition-colors ${
+                        signUpBillingCycle === 'monthly'
+                          ? 'bg-neutral-700 text-white'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      Monthly
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSignUpBillingCycle('yearly')}
+                      className={`px-2 py-0.5 rounded font-semibold transition-colors ${
+                        signUpBillingCycle === 'yearly'
+                          ? 'bg-neutral-700 text-white'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      Yearly
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-1.5">
+                  {subscriptionTiers
+                    .filter((t) => t.active)
+                    .map((tier) => {
+                      const tierUsd =
+                        signUpBillingCycle === 'monthly' ? tier.priceMonthly : tier.priceYearly;
+                      const tierLocal = convertFromUsd(
+                        tierUsd,
+                        selectedCountry.currency,
+                        exchangeRates
+                      );
+                      const isSelected = signUpTier === tier.id;
+                      return (
+                        <button
+                          key={tier.id}
+                          type="button"
+                          onClick={() => setSignUpTier(tier.id)}
+                          className={`rounded-lg border p-2 text-left transition-all cursor-pointer ${
+                            isSelected
+                              ? 'border-amber-500 bg-amber-500/10 text-white'
+                              : 'border-neutral-800 bg-neutral-900/70 text-neutral-400 hover:border-neutral-700 hover:text-neutral-200'
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold truncate">
+                            {tier.id === 'free' ? 'Free' : tier.id === 'pro' ? 'Pro' : 'VIP'}
+                          </div>
+                          <div className="mt-0.5 font-mono text-[10px] font-semibold text-emerald-400 truncate">
+                            {tierUsd === 0
+                              ? '0 ' + selectedCountry.currency
+                              : formatCurrencyAmount(tierLocal, selectedCountry.currency)}
+                          </div>
+                        </button>
+                      );
+                    })}
+                </div>
+
+                {/* Calculated Country Currency & Equal Rwanda RWF Payment Box */}
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5 space-y-1">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-neutral-400">
+                      Amount in {selectedCountry.countryName}:
+                    </span>
+                    <span className="font-mono font-bold text-white">
+                      {selectedUsdPrice === 0
+                        ? `Free (0 ${selectedCountry.currency})`
+                        : `${formatCurrencyAmount(calculatedLocalAmount, selectedCountry.currency)} / ${
+                            signUpBillingCycle === 'monthly' ? 'mo' : 'yr'
+                          }`}
+                    </span>
+                  </div>
+
+                  {selectedUsdPrice > 0 ? (
+                    <>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="flex items-center gap-1 text-emerald-300">
+                          <ArrowRightLeft className="h-3 w-3" />
+                          <span>Equal Rwanda MoMo Pay:</span>
+                        </span>
+                        <span className="font-mono font-bold text-emerald-400">
+                          {calculatedRwfAmount.toLocaleString()} RWF
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-amber-300">Or Crypto (USDT TRC-20):</span>
+                        <span className="font-mono font-bold text-amber-400">
+                          {selectedUsdPrice.toFixed(2)} USDT
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-neutral-400 pt-0.5 leading-relaxed">
+                        USD Base: ${selectedUsdPrice.toFixed(2)} ({rateSource} rate). Pay via Rwanda MoMo (<span className="font-mono text-white">{paymentDestination}</span>) or USDT TRC-20 (<span className="font-mono text-amber-300 break-all">{usdtTrc20Address}</span>).
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-[10px] text-neutral-400">
+                      Free account includes standard streaming &amp; downloads across channels (upgrade anytime).
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-1">
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full rounded-lg bg-gradient-to-r from-rose-600 to-rose-700 py-2.5 text-xs font-semibold text-white shadow-lg shadow-rose-900/40 hover:from-rose-500 hover:to-rose-600 transition-all"
+                  className="w-full rounded-lg bg-gradient-to-r from-rose-600 to-rose-700 py-2.5 text-xs font-semibold text-white shadow-lg shadow-rose-900/40 hover:from-rose-500 hover:to-rose-600 transition-all cursor-pointer"
                 >
-                  {isSubmitting ? 'Creating Account...' : 'Complete Registration & Watch'}
+                  {isSubmitting
+                    ? 'Creating Account...'
+                    : signUpTier === 'free'
+                    ? 'Complete Registration & Watch'
+                    : `Create Account & Pay ${formatCurrencyAmount(
+                        calculatedLocalAmount,
+                        selectedCountry.currency
+                      )}`}
                 </button>
               </div>
             </form>
